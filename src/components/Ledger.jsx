@@ -704,7 +704,186 @@ function Sheet({ title, onClose, children }) {
         </div>
         {children}
       </div>
+      <div style={{ display: "flex", gap: 10, padding: "16px" }}>
+        <button onClick={onLogSale} style={{ flex: 1, background: INK, color: "#fff", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <ShoppingBag size={17} /> Log sale
+        </button>
+        <button onClick={onRecordPayment} disabled={balance <= 0} style={{ flex: 1, background: balance > 0 ? "#fff" : "#F1EEE5", color: balance > 0 ? INK : "#B7AF9B", border: `1px solid ${balance > 0 ? INK : LINE}`, borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <Wallet size={17} /> Record payment
+        </button>
+        <button onClick={onRemind} disabled={balance <= 0 || !customer.phone} style={{ flex: 1, background: balance > 0 && customer.phone ? ACCENT : "#F1EEE5", color: balance > 0 && customer.phone ? "#3A2A0A" : "#B7AF9B", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <MessageCircle size={17} /> Remind
+        </button>
+      </div>
+
+      <div style={{ padding: "0 16px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, opacity: 0.55, textTransform: "uppercase", letterSpacing: 0.6 }}>History</div>
+        <button onClick={() => setShowFilter((v) => !v)} style={{ background: "none", border: "none", color: INK, fontSize: 12.5, fontWeight: 600, padding: 0 }}>
+          {showFilter ? "Hide filter" : "Filter dates"}
+        </button>
+      </div>
+
+      {showFilter && (
+        <div style={{ margin: "0 16px 14px", padding: 12, background: "#fff", borderRadius: 12, border: `1px solid ${LINE}`, display: "flex", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>From</label>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>To</label>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} />
+          </div>
+        </div>
+      )}
+
+      <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtered.length === 0 ? (
+          <EmptyState icon={<Clock size={24} color={INK} />} text="No transactions logged in this range." />
+        ) : (
+          filtered.map((t) => (
+            <button key={t.id} onClick={() => onEditTxn(t.id)} style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", textAlign: "left" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{t.note || (t.type === "sale" ? "Sale" : "Payment")}</div>
+                <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>{fmtDate(t.date)}</div>
+              </div>
+              <div className="num" style={{ fontWeight: 600, fontSize: 14, color: t.type === "sale" ? RUST : SAGE }}>
+                {t.type === "sale" ? "+" : "-"}{amt(t.amount)}
+              </div>
+            </button>
+          ))
+        )}
+      </div>
     </div>
+  );
+}
+
+// ---------- Bottom Navigation ----------
+function BottomNav({ view, setView, onPlus }) {
+  return (
+    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: `1px solid ${LINE}`, display: "flex", justifyContent: "space-around", alignItems: "center", height: 68, paddingBottom: 6 }}>
+      <button onClick={() => setView("dashboard")} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", color: view === "dashboard" ? INK : "#8A8270", gap: 3, fontSize: 11, fontWeight: 600 }}>
+        <Home size={20} />
+        Home
+      </button>
+
+      <button onClick={onPlus} style={{ background: INK, color: "#fff", border: "none", borderRadius: 999, width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", marginTop: -20, boxShadow: "0 4px 12px rgba(31,77,58,0.3)" }}>
+        <Plus size={24} />
+      </button>
+
+      <button onClick={() => setView("customers")} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", color: view === "customers" ? INK : "#8A8270", gap: 3, fontSize: 11, fontWeight: 600 }}>
+        <Users size={20} />
+        Customers
+      </button>
+    </div>
+  );
+}
+
+// ---------- Sheet Wrapper ----------
+function Sheet({ title, onClose, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end", zIndex: 100 }}>
+      <div style={{ background: PAPER, width: "100%", maxHeight: "85vh", overflowY: "auto", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, position: "relative" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div className="disp" style={{ fontSize: 18, fontWeight: 700, color: INK }}>{title}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#8A8270", padding: 4 }}><X size={20} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Log Sale Modal ----------
+function LogSaleModal({ customers, recentItems, preselected, onClose, onCreateCustomer, onSubmit }) {
+  const [customerId, setCustomerId] = useState(preselected || "");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [paidNow, setPaidNow] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [speechErr, setSpeechErr] = useState("");
+
+  const handleVoice = () => {
+    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+      setSpeechErr("Voice input not supported in this browser.");
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-NG";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => { setIsRecording(true); setSpeechErr(""); };
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      const parsed = parseVoiceEntry(transcript, customers);
+      if (parsed.amount) setAmount(String(parsed.amount));
+      if (parsed.customerId) setCustomerId(parsed.customerId);
+      if (parsed.note) setNote(parsed.note);
+      if (parsed.paidNow !== undefined) setPaidNow(parsed.paidNow);
+      setIsRecording(false);
+    };
+    recognition.onerror = () => { setSpeechErr("Couldn't hear you clearly. Try again."); setIsRecording(false); };
+    recognition.onend = () => setIsRecording(false);
+    recognition.start();
+  };
+
+  return (
+    <Sheet title="Log a sale" onClose={onClose}>
+      <label style={labelStyle}>Customer</label>
+      <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }}>
+        <option value="" disabled>Select a customer...</option>
+        {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+
+      <label style={labelStyle}>Amount</label>
+      <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" placeholder="0" className="num" style={{ ...inputStyle, fontSize: 20, fontWeight: 600, marginBottom: 14 }} />
+
+      <label style={labelStyle}>What was sold? (optional)</label>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. 2 bags of cement" style={{ ...inputStyle, marginBottom: 8 }} />
+      
+      {recentItems.length > 0 && (
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 10, marginBottom: 4 }}>
+          {recentItems.map((item, i) => (
+            <button key={i} onClick={() => setNote(item)} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: INK, whiteSpace: "nowrap" }}>
+              {item}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "14px 0 20px" }}>
+        <input type="checkbox" id="paidNow" checked={paidNow} onChange={(e) => setPaidNow(e.target.checked)} style={{ width: 18, height: 18, accentColor: INK }} />
+        <label htmlFor="paidNow" style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Customer paid immediately</label>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={handleVoice} style={{ width: 54, height: 54, borderRadius: 14, background: isRecording ? RUST : "#F1EEE5", color: isRecording ? "#fff" : INK, border: "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Mic size={22} className={isRecording ? "pulse" : ""} />
+        </button>
+        <button onClick={() => { const amt = parseFloat(amount); if (amt > 0 && customerId) onSubmit(customerId, amt, note.trim(), paidNow); }} disabled={!amount || !customerId} style={{ flex: 1, background: amount && customerId ? INK : "#B7AF9B", color: "#fff", border: "none", borderRadius: 14, fontSize: 15.5, fontWeight: 700 }}>
+          Save sale
+        </button>
+      </div>
+      {speechErr && <div style={{ fontSize: 12, color: RUST, marginTop: 8, textAlign: "center" }}>{speechErr}</div>}
+    </Sheet>
+  );
+}
+
+// ---------- Add Customer Modal ----------
+function AddCustomerModal({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  return (
+    <Sheet title="New customer" onClose={onClose}>
+      <label style={labelStyle}>Name</label>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. John Doe" style={{ ...inputStyle, marginBottom: 14 }} autoFocus />
+      <label style={labelStyle}>Phone (optional)</label>
+      <input value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^\d+]/g, ""))} inputMode="tel" placeholder="e.g. 08012345678" style={{ ...inputStyle, marginBottom: 20 }} />
+      <button onClick={() => { if (name.trim()) onSubmit(name.trim(), phone.trim()); }} disabled={!name.trim()} style={{ width: "100%", background: name.trim() ? INK : "#B7AF9B", color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
+        Add customer
+      </button>
+    </Sheet>
   );
 }
 
@@ -725,14 +904,14 @@ function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
         <button onClick={() => setAmount(String(Math.round(balance / 2)))} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Half</button>
       </div>
       <label style={labelStyle}>Note (optional)</label>
-
-      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" style={inputStyle} />
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" style={{ ...inputStyle, marginBottom: 16 }} />
       <button onClick={() => { const amt = parseFloat(amount); if (amt > 0) onSubmit(amt, note.trim()); }} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
         Record {amount ? naira(amount) : ""} payment
       </button>
     </Sheet>
   );
-}
+                }
+                                                           
 
 function EditTxnModal({ txn, deletePin, onClose, onSave, onDelete }) {
   const [amount, setAmount] = useState(String(txn.amount));
