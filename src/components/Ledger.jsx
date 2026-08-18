@@ -627,9 +627,105 @@ function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
       <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" className="num" style={{ ...inputStyle, fontSize: 20, fontWeight: 600 }} />
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         <button onClick={() => setAmount(String(balance))} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Full balance</button>
+                  Remind
+        </button>
+      </div>
+
+      <div style={{ padding: "0 16px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, opacity: 0.55, textTransform: "uppercase", letterSpacing: 0.6 }}>History</div>
+        <button onClick={() => setShowFilter((v) => !v)} style={{ background: "none", border: "none", color: INK, fontSize: 12.5, fontWeight: 600, padding: 0 }}>
+          {showFilter ? "Hide filter" : "Filter dates"}
+        </button>
+      </div>
+
+      {showFilter && (
+        <div style={{ margin: "0 16px 14px", padding: 12, background: "#fff", borderRadius: 12, border: `1px solid ${LINE}`, display: "flex", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>From</label>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>To</label>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} />
+          </div>
+        </div>
+      )}
+
+      <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtered.length === 0 ? (
+          <EmptyState icon={<Clock size={24} color={INK} />} text="No transactions logged in this range." />
+        ) : (
+          filtered.map((t) => (
+            <button key={t.id} onClick={() => onEditTxn(t.id)} style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", textAlign: "left" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{t.note || (t.type === "sale" ? "Sale" : "Payment")}</div>
+                <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>{fmtDate(t.date)}</div>
+              </div>
+              <div className="num" style={{ fontWeight: 600, fontSize: 14, color: t.type === "sale" ? RUST : SAGE }}>
+                {t.type === "sale" ? "+" : "-"}{amt(t.amount)}
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Bottom Navigation ----------
+function BottomNav({ view, setView, onPlus }) {
+  return (
+    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: `1px solid ${LINE}`, display: "flex", justifyContent: "space-around", alignItems: "center", height: 68, paddingBottom: 6 }}>
+      <button onClick={() => setView("dashboard")} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", color: view === "dashboard" ? INK : "#8A8270", gap: 3, fontSize: 11, fontWeight: 600 }}>
+        <Home size={20} />
+        Home
+      </button>
+
+      <button onClick={onPlus} style={{ background: INK, color: "#fff", border: "none", borderRadius: 999, width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", marginTop: -20, boxShadow: "0 4px 12px rgba(31,77,58,0.3)" }}>
+        <Plus size={24} />
+      </button>
+
+      <button onClick={() => setView("customers")} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", color: view === "customers" ? INK : "#8A8270", gap: 3, fontSize: 11, fontWeight: 600 }}>
+        <Users size={20} />
+        Customers
+      </button>
+    </div>
+  );
+}
+
+// ---------- Sheet Wrapper ----------
+function Sheet({ title, onClose, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end", zIndex: 100 }}>
+      <div style={{ background: PAPER, width: "100%", maxHeight: "85vh", overflowY: "auto", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, position: "relative" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div className="disp" style={{ fontSize: 18, fontWeight: 700, color: INK }}>{title}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#8A8270", padding: 4 }}><X size={20} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Record Payment Modal ----------
+function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
+  const [amount, setAmount] = useState(String(balance > 0 ? balance : ""));
+  const [note, setNote] = useState("");
+
+  return (
+    <Sheet title={`Record payment for ${customer.name}`} onClose={onClose}>
+      <div style={{ fontSize: 12.5, color: "#8A8270", marginBottom: 12 }}>
+        Current balance: <b style={{ color: RUST }}>{naira(balance)}</b>
+      </div>
+      <label style={labelStyle}>Amount paid</label>
+      <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" placeholder="0" className="num" style={{ ...inputStyle, fontSize: 20, fontWeight: 600, marginBottom: 8 }} autoFocus />
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button onClick={() => setAmount(String(balance))} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Full amount</button>
         <button onClick={() => setAmount(String(Math.round(balance / 2)))} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Half</button>
       </div>
       <label style={labelStyle}>Note (optional)</label>
+
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" style={inputStyle} />
       <button onClick={() => { const amt = parseFloat(amount); if (amt > 0) onSubmit(amt, note.trim()); }} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
         Record {amount ? naira(amount) : ""} payment
