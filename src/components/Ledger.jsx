@@ -370,4 +370,61 @@ function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPa
           <Wallet size={17} /> Record payment
         </button>
         <button onClick={onRemind} disabled={balance <= 0 || !customer.phone} style={{ flex: 1, background: balance > 0 && customer.phone ? ACCENT : "#F1EEE5", color: balance > 0 && customer.phone ? "#3A2A0A" : "#B7AF9B", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-          <MessageCircle size={17} />
+          <MessageCircle size={17} /> Remind
+        </button>
+      </div>
+
+      <div style={{ padding: "4px 16px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, opacity: 0.55, textTransform: "uppercase", letterSpacing: 0.6 }}>
+            History {(dateFrom || dateTo) && `· ${filtered.length} shown`}
+          </div>
+          {txns.length > 0 && (
+            <button onClick={() => setShowFilter((s) => !s)} style={{ background: "none", border: "none", color: INK, fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 4, padding: 0 }}>
+              <Search size={13} /> {showFilter ? "Hide filter" : "Filter"}
+            </button>
+          )}
+        </div>
+
+        {showFilter && (
+          <div style={{ ...cardStyle, display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10.5, color: "#8A8270", marginBottom: 3 }}>From</div>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ width: "100%", border: "none", fontSize: 13, fontFamily: "inherit" }} />
+            </div>
+            <div style={{ width: 1, height: 28, background: LINE }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10.5, color: "#8A8270", marginBottom: 3 }}>To</div>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ width: "100%", border: "none", fontSize: 13, fontFamily: "inherit" }} />
+            </div>
+            {(dateFrom || dateTo) && (
+              <button onClick={() => { setDateFrom(""); setDateTo(""); }} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 8px", flexShrink: 0 }}>
+                <X size={13} color={TEXT} />
+              </button>
+            )}
+          </div>
+        )}
+
+        {txns.length === 0 ? (
+          <EmptyState icon={<Clock size={24} color={INK} />} text="No transactions yet." />
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={<Search size={24} color={INK} />} text="No transactions in that date range." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {filtered.map((t) => (
+              <button key={t.id} onClick={() => onEditTxn(t.id)} style={{ ...cardStyle, display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", textAlign: "left" }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                    {t.type === "sale" ? <ShoppingBag size={13} color={RUST} /> : <Check size={13} color={SAGE} />}
+                    {t.type === "sale" ? "Sale" : "Payment"}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>{fmtDate(t.date)}{t.note ? " · " + t.note : ""}{t.loggedBy ? " · " + t.loggedBy : ""}</div>
+                </div>
+                <div className="num" style={{ fontWeight: 600, fontSize: 14, color: t.type === "sale" ? RUST : SAGE }}>{t.type === "sale" ? "+" : "−"}{amt(t.amount)}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
