@@ -428,3 +428,490 @@ function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPa
       </div>
     </div>
   );
+  // ---------- Bottom nav ----------
+function BottomNav({ view, setView, onPlus }) {
+  return (
+    <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: "#fff", borderTop: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "space-around", padding: "10px 0 max(10px, env(safe-area-inset-bottom))", zIndex: 100 }}>
+      <NavBtn active={view === "dashboard"} icon={<Home size={20} />} label="Home" onClick={() => setView("dashboard")} />
+      <button onClick={onPlus} style={{ background: INK, border: "none", borderRadius: 999, width: 52, height: 52, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", marginTop: -26, boxShadow: "0 6px 14px rgba(31,77,58,0.35)" }}>
+        <Plus size={24} />
+      </button>
+      <NavBtn active={view === "customers"} icon={<Users size={20} />} label="Customers" onClick={() => setView("customers")} />
+    </div>
+  );
+}
+
+function NavBtn({ active, icon, label, onClick }) {
+  return (
+    <button onClick={onClick} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, color: active ? INK : "#A39B87", padding: "2px 14px" }}>
+      {icon}
+      <span style={{ fontSize: 10.5, fontWeight: 600 }}>{label}</span>
+    </button>
+  );
+}
+
+// ---------- Modals shell ----------
+function Sheet({ title, onClose, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(20,20,15,0.45)", zIndex: 300, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
+      <div className="sheet-anim" style={{ animation: "sheetUp .28s cubic-bezier(.2,.8,.2,1)", background: PAPER, width: "100%", maxHeight: "88vh", overflowY: "auto", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: "18px 18px calc(20px + env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ width: 36, height: 4, background: LINE, borderRadius: 99, margin: "0 auto 14px" }} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div className="disp" style={{ fontSize: 19, fontWeight: 700, color: INK_DARK }}>{title}</div>
+          <button onClick={onClose} style={{ background: "#F1EEE5", border: "none", borderRadius: 999, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <X size={16} color={TEXT} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, onCreateCustomer }) {
+  const [customerId, setCustomerId] = useState(preselected || "");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [paidNow, setPaidNow] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [showNew, setShowNew] = useState(customers.length === 0);
+
+  const [listening, setListening] = useState(false);
+  const [voiceSupported] = useState(() => typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition));
+  const [heard, setHeard] = useState("");
+  const [voiceResult, setVoiceResult] = useState(null);
+  const recognitionRef = React.useRef(null);
+
+  function startListening() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const rec = new SR();
+    rec.lang = "en-NG";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      setHeard(transcript);
+      const result = parseVoiceEntry(transcript, customers);
+      setVoiceResult(result);
+      if (result.amount) setAmount(String(result.amount));
+      if (result.customer) { setCustomerId(result.customer.id); setShowNew(false); }
+      else if (customers.length === 0) { setShowNew(true); setNewName(""); }
+      if (result.note) setNote(result.note);
+      setPaidNow(result.paidNow);
+    };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => setListening(false);
+    recognitionRef.current = rec;
+    setHeard(""); setVoiceResult(null);
+    setListening(true);
+    rec.start();
+  }
+
+  function stopListening() {
+    if (recognitionRef.current) recognitionRef.current.stop();
+    setListening(false);
+  }
+
+  const sorted = [...customers].sort((a, b) => a.name.localeCompare(b.name));
+
+  async function submit() {
+    let cid = customerId;
+    if (showNew) {
+      if (!newName.trim()) return;
+      const c = await onCreateCustomer(newName, "");
+      cid = c.id;
+    }
+    const amt = parseFloat(amount);
+    if (!cid || !amt || amt <= 0) return;
+    onSubmit(cid, amt, note.trim(), paidNow);
+  }
+
+  return (
+    <Sheet title="Log a sale" onClose={onClose}>
+      {voiceSupported && (
+        <div style={{ marginBottom: 16 }}>
+          <button
+            onClick={listening ? stopListening : startListening}
+            style={{
+              width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              background: listening ? RUST : "#F1EEE5", color: listening ? "#fff" : INK,
+              border: "none", borderRadius: 14, padding: "14px", fontWeight: 700, fontSize: 14.5,
+            }}
+          >
+            <Mic size={18} /> {listening ? "Listening… tap to stop" : "Speak this sale instead"}
+          </button>
+          {heard && (
+            <div style={{ ...cardStyle, marginTop: 10, background: "#F1EEE5" }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#8A8270", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Heard</div>
+              <div style={{ fontSize: 13.5, color: TEXT, fontStyle: "italic", marginBottom: 8 }}>"{heard}"</div>
+              <div style={{ fontSize: 11.5, color: voiceResult && voiceResult.amount ? SAGE : RUST }}>
+                {voiceResult && voiceResult.amount
+                  ? `Filled in below — check everything before confirming.`
+                  : `Couldn't find an amount — please fill in the fields below.`}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!showNew ? (
+        <>
+          <label style={labelStyle}>Customer</label>
+          <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} style={{ ...inputStyle, appearance: "none" }}>
+            <option value="">Select customer…</option>
+            {sorted.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button onClick={() => setShowNew(true)} style={{ background: "none", border: "none", color: INK, fontSize: 13, fontWeight: 600, padding: "0 0 12px", textAlign: "left" }}>+ New customer instead</button>
+        </>
+      ) : (
+        <>
+          <label style={labelStyle}>New customer name</label>
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Shop or customer name" style={inputStyle} autoFocus />
+          {customers.length > 0 && (
+            <button onClick={() => setShowNew(false)} style={{ background: "none", border: "none", color: INK, fontSize: 13, fontWeight: 600, padding: "0 0 12px", textAlign: "left" }}>← Choose existing customer</button>
+          )}
+        </>
+      )}
+
+      <label style={labelStyle}>Amount</label>
+      <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" inputMode="decimal" className="num" style={{ ...inputStyle, fontSize: 20, fontWeight: 600 }} />
+
+      <label style={labelStyle}>Note (optional)</label>
+      {recentItems && recentItems.length > 0 && (
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, marginTop: -4 }}>
+          {recentItems.map((item) => (
+            <button key={item} onClick={() => setNote(item)} style={{ flexShrink: 0, background: note === item ? INK : "#F1EEE5", color: note === item ? "#fff" : "#4A4636", border: "none", borderRadius: 999, padding: "6px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>{item}</button>
+          ))}
+        </div>
+      )}
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. 2 cartons indomie" style={inputStyle} />
+
+      <button onClick={() => setPaidNow(!paidNow)} style={{ display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", padding: "6px 0 18px", width: "100%" }}>
+        <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${paidNow ? INK : LINE}`, background: paidNow ? INK : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {paidNow && <Check size={14} color="#fff" />}
+        </div>
+        <span style={{ fontSize: 14, textAlign: "left" }}>Paid in full now (cash sale, not credit)</span>
+      </button>
+
+      <button onClick={submit} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
+        Confirm {amount ? naira(amount) : ""} {paidNow ? "cash sale" : "on credit"}
+      </button>
+    </Sheet>
+  );
+}
+
+function AddCustomerModal({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  return (
+    <Sheet title="New customer" onClose={onClose}>
+      <label style={labelStyle}>Name</label>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Shop or customer name" style={inputStyle} autoFocus />
+      <label style={labelStyle}>Phone (for WhatsApp reminders)</label>
+      <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="080…" inputMode="tel" style={inputStyle} />
+      <button onClick={() => name.trim() && onSubmit(name, phone)} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
+        Add customer
+      </button>
+    </Sheet>
+  );
+}
+
+function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
+  const [amount, setAmount] = useState(String(balance));
+  const [note, setNote] = useState("");
+  return (
+    <Sheet title={`Payment from ${customer.name}`} onClose={onClose}>
+      <div style={{ fontSize: 13, color: "#6B6455", marginBottom: 14 }}>Current balance: <span className="num" style={{ fontWeight: 600, color: RUST }}>{naira(balance)}</span></div>
+      <label style={labelStyle}>Amount received</label>
+      <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" className="num" style={{ ...inputStyle, fontSize: 20, fontWeight: 600 }} />
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button onClick={() => setAmount(String(balance))} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Full balance</button>
+        <button onClick={() => setAmount(String(Math.round(balance / 2)))} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Half</button>
+      </div>
+      <label style={labelStyle}>Note (optional)</label>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" style={inputStyle} />
+      <button onClick={() => { const amt = parseFloat(amount); if (amt > 0) onSubmit(amt, note.trim()); }} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
+        Record {amount ? naira(amount) : ""} payment
+      </button>
+    </Sheet>
+  );
+}
+
+function EditTxnModal({ txn, deletePin, onClose, onSave, onDelete }) {
+  const [amount, setAmount] = useState(String(txn.amount));
+  const [note, setNote] = useState(txn.note || "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [pinInput, setPinInput] = useState("");
+  const [pinErr, setPinErr] = useState("");
+  const [attempts, setAttempts] = useState(0);
+  const [lockedUntil, setLockedUntil] = useState(0);
+  const [, forceTick] = useState(0);
+  const locked = lockedUntil > Date.now();
+  const canDelete = !locked && (deletePin ? pinInput === deletePin : confirmText.trim().toUpperCase() === "DELETE");
+
+  useEffect(() => {
+    if (!locked) return;
+    const iv = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(iv);
+  }, [locked]);
+
+  function attemptDelete() {
+    if (locked) return;
+    if (deletePin && pinInput !== deletePin) {
+      const next = attempts + 1;
+      setAttempts(next);
+      if (next >= 5) { setLockedUntil(Date.now() + 30000); setPinErr("Too many wrong attempts. Try again in 30 seconds."); }
+      else setPinErr(`Incorrect PIN (${5 - next} attempt${5 - next === 1 ? "" : "s"} left)`);
+      setPinInput("");
+      return;
+    }
+    onDelete();
+  }
+
+  return (
+    <Sheet title={`Edit ${txn.type === "sale" ? "sale" : "payment"}`} onClose={onClose}>
+      <div style={{ fontSize: 12.5, color: "#8A8270", marginBottom: 14 }}>{fmtDate(txn.date)}</div>
+      <label style={labelStyle}>Amount</label>
+      <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" className="num" style={{ ...inputStyle, fontSize: 20, fontWeight: 600 }} />
+      <label style={labelStyle}>Note</label>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. 2 cartons indomie" style={inputStyle} />
+      <button onClick={() => { const amt = parseFloat(amount); if (amt > 0) onSave({ amount: amt, note: note.trim() }); }} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700, marginBottom: 10 }}>
+        Save changes
+      </button>
+
+      {!confirmDelete ? (
+        <button onClick={() => setConfirmDelete(true)} style={{ width: "100%", background: "none", border: `1px solid ${RUST}`, color: RUST, borderRadius: 14, padding: "13px", fontSize: 14.5, fontWeight: 600 }}>
+          Delete this transaction
+        </button>
+      ) : (
+        <div style={{ ...cardStyle, borderColor: RUST }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 12 }}>
+            <AlertCircle size={16} color={RUST} style={{ marginTop: 1, flexShrink: 0 }} />
+            <div style={{ fontSize: 13, color: "#6B6455", lineHeight: 1.5 }}>
+              Delete this {txn.type === "sale" ? "sale" : "payment"} of {naira(txn.amount)}? This can't be undone.
+              {deletePin ? " Enter your PIN to confirm." : (<> Type <b style={{ color: TEXT }}>DELETE</b> below to confirm.</>)}
+            </div>
+          </div>
+          {deletePin ? (
+            <>
+              <input value={pinInput} onChange={(e) => { setPinInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setPinErr(""); }} inputMode="numeric" type="password" placeholder="PIN" className="num" disabled={locked} style={{ ...inputStyle, marginBottom: 8, textAlign: "center", letterSpacing: 4, opacity: locked ? 0.5 : 1 }} autoFocus />
+              {pinErr && <div style={{ fontSize: 12, color: RUST, marginBottom: 8, textAlign: "center" }}>{locked ? `Too many wrong attempts. Try again in ${Math.ceil((lockedUntil - Date.now()) / 1000)}s.` : pinErr}</div>}
+            </>
+          ) : (
+            <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="Type DELETE to confirm" style={{ ...inputStyle, marginBottom: 10, textAlign: "center", fontWeight: 600, letterSpacing: 1 }} autoFocus />
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => { setConfirmDelete(false); setConfirmText(""); setPinInput(""); setPinErr(""); }} style={{ flex: 1, background: "#F1EEE5", border: "none", borderRadius: 10, padding: "10px", fontWeight: 600, fontSize: 13.5 }}>Cancel</button>
+            <button onClick={attemptDelete} disabled={!canDelete} style={{ flex: 1, background: canDelete ? RUST : "#E9C9BE", color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontWeight: 600, fontSize: 13.5 }}>Yes, delete</button>
+          </div>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+// ---------- Settings ----------
+function SettingsModal({ businessName, plan, member, deletePin, customerCount, txnCount, deletedCount, onClose, onSave, onSavePin, onChangeDisplayName, onInvite, onOpenRecycleBin, onExport, onSignOut }) {
+  const [name, setName] = useState(businessName);
+  const [editingUser, setEditingUser] = useState(false);
+  const [displayNameInput, setDisplayNameInput] = useState((member && member.display_name) || "");
+  const [editingPin, setEditingPin] = useState(false);
+  const [pinAction, setPinAction] = useState("set");
+  const [verified, setVerified] = useState(false);
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+
+  function startPinFlow(action) {
+    setPinAction(action); setEditingPin(true); setVerified(!deletePin);
+    setCurrentPin(""); setNewPin(""); setConfirmPin(""); setPinError("");
+  }
+  function verifyCurrent() {
+    if (currentPin === deletePin) { setVerified(true); setPinError(""); } else setPinError("Incorrect PIN");
+  }
+  function submitNewPin() {
+    if (!/^\d{4,6}$/.test(newPin)) { setPinError("PIN must be 4-6 digits"); return; }
+    if (newPin !== confirmPin) { setPinError("PINs don't match"); return; }
+    onSavePin(newPin); setEditingPin(false);
+  }
+  function submitRemove() { onSavePin(""); setEditingPin(false); }
+
+  return (
+    <Sheet title="Settings" onClose={onClose}>
+      <div style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Avatar name={displayNameInput || "?"} />
+          <div>
+            <div style={{ fontSize: 11, color: "#8A8270" }}>You're signed in as</div>
+            {!editingUser ? (
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{displayNameInput || "Not set"} {member && member.role === "owner" && <span style={{ fontSize: 10.5, color: ACCENT, fontWeight: 700 }}>· OWNER</span>}</div>
+            ) : (
+              <input value={displayNameInput} onChange={(e) => setDisplayNameInput(e.target.value)} placeholder="Your name" style={{ fontSize: 14, fontWeight: 600, border: "none", borderBottom: `1px solid ${LINE}`, outline: "none", background: "none", padding: "2px 0", width: 140 }} autoFocus />
+            )}
+          </div>
+        </div>
+        {editingUser ? (
+          <button onClick={() => { if (displayNameInput.trim()) { onChangeDisplayName(displayNameInput.trim()); setEditingUser(false); } }} style={{ background: INK, color: "#fff", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}>Save</button>
+        ) : (
+          <button onClick={() => setEditingUser(true)} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: INK }}>Change</button>
+        )}
+      </div>
+
+      <label style={labelStyle}>Business name</label>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Chidera Stores" style={inputStyle} />
+      <button onClick={() => onSave(name)} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "14px", fontSize: 15, fontWeight: 700, marginBottom: 18 }}>Save</button>
+
+      <div style={{ ...cardStyle, marginBottom: 18, background: plan === "free" ? "#F1EEE5" : "#EAF4EF" }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{plan === "free" ? "Free plan" : "Paid plan"}</div>
+        <div style={{ fontSize: 12, color: "#6B6455", marginTop: 3 }}>
+          {plan === "free" ? `Up to 20 customers, 1 team. ${customerCount}/20 used.` : "Unlimited customers and team members."}
+        </div>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+          <UserPlus size={14} color="#6B6455" />
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#6B6455" }}>Invite a teammate</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+          <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="their@email.com" type="email" style={{ ...inputStyle, marginBottom: 0, flex: 1 }} />
+          <button onClick={() => { if (inviteEmail.trim()) { onInvite(inviteEmail.trim()); setInviteEmail(""); } }} style={{ background: INK, color: "#fff", border: "none", borderRadius: 12, padding: "0 16px", fontWeight: 600, fontSize: 13 }}>Invite</button>
+        </div>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+          <Lock size={14} color="#6B6455" />
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#6B6455" }}>Delete protection</div>
+        </div>
+
+        {!editingPin && (
+          deletePin ? (
+            <div style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 13 }}>PIN required to delete a logged sale</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => startPinFlow("change")} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: INK }}>Change</button>
+                <button onClick={() => startPinFlow("remove")} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: RUST }}>Remove</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 13, color: "#6B6455" }}>No PIN set — anyone can delete a sale</div>
+              <button onClick={() => startPinFlow("set")} style={{ background: INK, border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: "#fff" }}>Set PIN</button>
+            </div>
+          )
+        )}
+
+        {editingPin && !verified && (
+          <div style={cardStyle}>
+            <div style={{ fontSize: 12.5, marginBottom: 8, color: "#6B6455" }}>Enter your current PIN to continue</div>
+            <input value={currentPin} onChange={(e) => { setCurrentPin(e.target.value.replace(/\D/g, "").slice(0, 6)); setPinError(""); }} inputMode="numeric" type="password" placeholder="Current PIN" className="num" style={{ ...inputStyle, marginBottom: 8, letterSpacing: 4 }} autoFocus />
+            {pinError && <div style={{ fontSize: 12, color: RUST, marginBottom: 8 }}>{pinError}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setEditingPin(false)} style={{ flex: 1, background: "#F1EEE5", border: "none", borderRadius: 10, padding: "10px", fontWeight: 600, fontSize: 13.5 }}>Cancel</button>
+              <button onClick={verifyCurrent} style={{ flex: 1, background: INK, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontWeight: 600, fontSize: 13.5 }}>Continue</button>
+            </div>
+          </div>
+        )}
+
+        {editingPin && verified && pinAction !== "remove" && (
+          <div style={cardStyle}>
+            <div style={{ fontSize: 12.5, marginBottom: 8, color: "#6B6455" }}>{pinAction === "set" ? "Choose a 4-6 digit PIN" : "Choose a new 4-6 digit PIN"}</div>
+            <input value={newPin} onChange={(e) => { setNewPin(e.target.value.replace(/\D/g, "").slice(0, 6)); setPinError(""); }} inputMode="numeric" type="password" placeholder="New PIN" className="num" style={{ ...inputStyle, marginBottom: 8, letterSpacing: 4 }} autoFocus />
+            <input value={confirmPin} onChange={(e) => { setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 6)); setPinError(""); }} inputMode="numeric" type="password" placeholder="Confirm PIN" className="num" style={{ ...inputStyle, marginBottom: 8, letterSpacing: 4 }} />
+            {pinError && <div style={{ fontSize: 12, color: RUST, marginBottom: 8 }}>{pinError}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setEditingPin(false)} style={{ flex: 1, background: "#F1EEE5", border: "none", borderRadius: 10, padding: "10px", fontWeight: 600, fontSize: 13.5 }}>Cancel</button>
+              <button onClick={submitNewPin} style={{ flex: 1, background: INK, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontWeight: 600, fontSize: 13.5 }}>Save PIN</button>
+            </div>
+          </div>
+        )}
+
+        {editingPin && verified && pinAction === "remove" && (
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, marginBottom: 10, color: "#6B6455" }}>Remove PIN protection? Anyone on the team will be able to delete a logged sale without one.</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setEditingPin(false)} style={{ flex: 1, background: "#F1EEE5", border: "none", borderRadius: 10, padding: "10px", fontWeight: 600, fontSize: 13.5 }}>Cancel</button>
+              <button onClick={submitRemove} style={{ flex: 1, background: RUST, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontWeight: 600, fontSize: 13.5 }}>Remove PIN</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 16, marginTop: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#6B6455", marginBottom: 10 }}>Data safety</div>
+        <button onClick={onOpenRecycleBin} style={{ ...cardStyle, width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, textAlign: "left" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Recently deleted</div>
+            <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>Deleted sales are kept here, not erased</div>
+          </div>
+          <div className="num" style={{ fontSize: 15, fontWeight: 700, color: deletedCount > 0 ? ACCENT : "#B7AF9B" }}>{deletedCount}</div>
+        </button>
+        <button onClick={onExport} style={{ ...cardStyle, width: "100%", display: "flex", alignItems: "center", gap: 10, textAlign: "left" }}>
+          <div style={{ width: 32, height: 32, borderRadius: 999, background: "#F1EEE5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <BookOpen size={15} color={INK} />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Download a backup</div>
+            <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>Save a copy of everything outside this device</div>
+          </div>
+        </button>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 16, marginTop: 16, display: "flex", gap: 20 }}>
+        <div>
+          <div className="num" style={{ fontSize: 20, fontWeight: 600, color: INK }}>{customerCount}</div>
+          <div style={{ fontSize: 11.5, color: "#8A8270" }}>customers</div>
+        </div>
+        <div>
+          <div className="num" style={{ fontSize: 20, fontWeight: 600, color: INK }}>{txnCount}</div>
+          <div style={{ fontSize: 11.5, color: "#8A8270" }}>transactions logged</div>
+        </div>
+      </div>
+
+      <button onClick={onSignOut} style={{ width: "100%", background: "none", border: `1px solid ${LINE}`, color: "#6B6455", borderRadius: 14, padding: "13px", fontSize: 14, fontWeight: 600, marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <LogOut size={15} /> Sign out
+      </button>
+    </Sheet>
+  );
+}
+
+// ---------- Recycle bin ----------
+function RecycleBinModal({ items, customers, onClose, onRestore }) {
+  const nameFor = (id) => (customers.find((c) => c.id === id) || {}).name || "Unknown customer";
+  return (
+    <Sheet title="Recently deleted" onClose={onClose}>
+      <div style={{ fontSize: 12.5, color: "#6B6455", marginBottom: 14, lineHeight: 1.5 }}>
+        Deleted sales and payments land here instead of disappearing. Restore anything removed by mistake — or by someone who shouldn't have.
+      </div>
+      {items.length === 0 ? (
+        <EmptyState icon={<Clock size={24} color={INK} />} text="Nothing deleted yet." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {items.map((t) => (
+            <div key={t.id} style={{ ...cardStyle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{nameFor(t.customerId)}</div>
+                <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>{t.type === "sale" ? "Sale" : "Payment"} of {naira(t.amount)} · logged {fmtDate(t.date)}</div>
+                <div style={{ fontSize: 11, color: RUST, marginTop: 2 }}>deleted {fmtDate(t.deletedAt || t.date)}{t.deletedBy ? ` by ${t.deletedBy}` : ""}</div>
+              </div>
+              <button onClick={() => onRestore(t.id)} style={{ background: INK, color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, flexShrink: 0 }}>Restore</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+function Toast({ text }) {
+  return (
+    <div style={{ position: "fixed", bottom: 100, left: "50%", transform: "translateX(-50%)", background: INK_DARK, color: "#fff", padding: "10px 18px", borderRadius: 999, fontSize: 13.5, fontWeight: 600, zIndex: 400, boxShadow: "0 8px 20px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", gap: 6 }}>
+      <Check size={15} color={ACCENT} /> {text}
+    </div>
+  );
+}
