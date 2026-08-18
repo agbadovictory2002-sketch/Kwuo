@@ -907,8 +907,6 @@ function RecycleBinModal({ items, customers, onClose, onRestore }) {
     </Sheet>
   );
 }
-
-  
 function Toast({ text }) {
   return (
     <div style={{ position: "fixed", bottom: 100, left: "50%", transform: "translateX(-50%)", background: INK_DARK, color: "#fff", padding: "10px 18px", borderRadius: 999, fontSize: 13.5, fontWeight: 600, zIndex: 400, boxShadow: "0 8px 20px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", gap: 6 }}>
@@ -916,3 +914,5 @@ function Toast({ text }) {
     </div>
   );
 }
+
+  
