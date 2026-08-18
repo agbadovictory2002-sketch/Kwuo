@@ -768,7 +768,7 @@ function SettingsModal({ businessName, plan, member, deletePin, customerCount, t
       <button onClick={() => onSave(name)} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "14px", fontSize: 15, fontWeight: 700, marginBottom: 18 }}>Save</button>
 
       <div style={{ ...cardStyle, marginBottom: 18, background: plan === "free" ? "#F1EEE5" : "#EAF4EF" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>{plan === "free" : "Paid plan"}</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{plan === "free" } "Paid plan"}</div>
         <div style={{ fontSize: 12, color: "#6B6455", marginTop: 3 }}>
           {plan === "free" ? `Up to 20 customers, 1 team. ${customerCount}/20 used.` : "Unlimited customers and team members."}
         </div>
