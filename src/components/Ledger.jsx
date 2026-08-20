@@ -361,13 +361,16 @@ function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPa
         <div style={{ marginTop: 18, fontSize: 12.5, opacity: 0.75 }}>Balance</div>
         <div className="num" style={{ fontSize: 30, fontWeight: 700, color: balance > 0 ? ACCENT : "#DFF3E8" }}>{amt(balance)}</div>
       </div>
-      
+
       <div style={{ display: "flex", gap: 10, padding: "16px" }}>
         <button onClick={onLogSale} style={{ flex: 1, background: INK, color: "#fff", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
           <ShoppingBag size={17} /> Log sale
         </button>
         <button onClick={onRecordPayment} disabled={balance <= 0} style={{ flex: 1, background: balance > 0 ? "#fff" : "#F1EEE5", color: balance > 0 ? INK : "#B7AF9B", border: `1px solid ${balance > 0 ? INK : LINE}`, borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
           <Wallet size={17} /> Record payment
+        </button>
+        <button onClick={onRemind} disabled={balance <= 0 || !customer.phone} style={{ flex: 1, background: balance > 0 && customer.phone ? ACCENT : "#F1EEE5", color: balance > 0 && customer.phone ? "#3A2A0A" : "#B7AF9B", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <MessageCircle size={17} /> Record payment
         </button>
         <button onClick={onRemind} disabled={balance <= 0 || !customer.phone} style={{ flex: 1, background: balance > 0 && customer.phone ? ACCENT : "#F1EEE5", color: balance > 0 && customer.phone ? "#3A2A0A" : "#B7AF9B", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
           <MessageCircle size={17} /> Remind
@@ -479,6 +482,7 @@ function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, 
   const [showNew, setShowNew] = useState(customers.length === 0);
 
   const [listening, setListening] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [voiceSupported] = useState(() => typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition));
   const [heard, setHeard] = useState("");
   const [voiceResult, setVoiceResult] = useState(null);
@@ -518,18 +522,24 @@ function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, 
   const sorted = [...customers].sort((a, b) => a.name.localeCompare(b.name));
 
   async function submit() {
+    if (busy) return;
     let cid = customerId;
-    if (showNew) {
-      if (!newName.trim()) return;
-      const c = await onCreateCustomer(newName, "");
-      cid = c.id;
-    }
+    if (showNew && !newName.trim()) return;
     const amt = parseFloat(amount);
-    if (!cid || !amt || amt <= 0) return;
-    onSubmit(cid, amt, note.trim(), paidNow);
+    if (!showNew && (!cid || !amt || amt <= 0)) return;
+    if (showNew && (!amt || amt <= 0)) return;
+    setBusy(true);
+    try {
+      if (showNew) {
+        const c = await onCreateCustomer(newName, "");
+        cid = c.id;
+      }
+      await onSubmit(cid, amt, note.trim(), paidNow);
+    } finally {
+      setBusy(false);
+    }
   }
-
-  return (
+return (
     <Sheet title="Log a sale" onClose={onClose}>
       {voiceSupported && (
         <div style={{ marginBottom: 16 }}>
@@ -596,24 +606,29 @@ function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, 
         <span style={{ fontSize: 14, textAlign: "left" }}>Paid in full now (cash sale, not credit)</span>
       </button>
 
-      <button onClick={submit} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
-        Confirm {amount ? naira(amount) : ""} {paidNow ? "cash sale" : "on credit"}
+      <button onClick={submit} disabled={busy} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+        {busy ? "Saving…" : `Confirm ${amount ? naira(amount) : ""} ${paidNow ? "cash sale" : "on credit"}`}
       </button>
     </Sheet>
   );
 }
-
 function AddCustomerModal({ onClose, onSubmit }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit() {
+    if (busy || !name.trim()) return;
+    setBusy(true);
+    try { await onSubmit(name, phone); } finally { setBusy(false); }
+  }
   return (
     <Sheet title="New customer" onClose={onClose}>
       <label style={labelStyle}>Name</label>
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Shop or customer name" style={inputStyle} autoFocus />
       <label style={labelStyle}>Phone (for WhatsApp reminders)</label>
       <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="080…" inputMode="tel" style={inputStyle} />
-      <button onClick={() => name.trim() && onSubmit(name, phone)} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
-        Add customer
+      <button onClick={submit} disabled={busy} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+        {busy ? "Adding…" : "Add customer"}
       </button>
     </Sheet>
   );
@@ -622,6 +637,13 @@ function AddCustomerModal({ onClose, onSubmit }) {
 function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
   const [amount, setAmount] = useState(String(balance));
   const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit() {
+    const amt = parseFloat(amount);
+    if (busy || !amt || amt <= 0) return;
+    setBusy(true);
+    try { await onSubmit(amt, note.trim()); } finally { setBusy(false); }
+  }
   return (
     <Sheet title={`Payment from ${customer.name}`} onClose={onClose}>
       <div style={{ fontSize: 13, color: "#6B6455", marginBottom: 14 }}>Current balance: <span className="num" style={{ fontWeight: 600, color: RUST }}>{naira(balance)}</span></div>
@@ -633,8 +655,8 @@ function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
       </div>
       <label style={labelStyle}>Note (optional)</label>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" style={inputStyle} />
-      <button onClick={() => { const amt = parseFloat(amount); if (amt > 0) onSubmit(amt, note.trim()); }} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700 }}>
-        Record {amount ? naira(amount) : ""} payment
+      <button onClick={submit} disabled={busy} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+        {busy ? "Recording…" : `Record ${amount ? naira(amount) : ""} payment`}
       </button>
     </Sheet>
   );
@@ -671,7 +693,7 @@ function EditTxnModal({ txn, deletePin, onClose, onSave, onDelete }) {
     }
     onDelete();
   }
-
+  
   return (
     <Sheet title={`Edit ${txn.type === "sale" ? "sale" : "payment"}`} onClose={onClose}>
       <div style={{ fontSize: 12.5, color: "#8A8270", marginBottom: 14 }}>{fmtDate(txn.date)}</div>
@@ -768,7 +790,7 @@ function SettingsModal({ businessName, plan, member, deletePin, customerCount, t
       <button onClick={() => onSave(name)} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "14px", fontSize: 15, fontWeight: 700, marginBottom: 18 }}>Save</button>
 
       <div style={{ ...cardStyle, marginBottom: 18, background: plan === "free" ? "#F1EEE5" : "#EAF4EF" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>{plan === "free" } "Paid plan"}</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{plan === "free" ? "Free plan" : "Paid plan"}</div>
         <div style={{ fontSize: 12, color: "#6B6455", marginTop: 3 }}>
           {plan === "free" ? `Up to 20 customers, 1 team. ${customerCount}/20 used.` : "Unlimited customers and team members."}
         </div>
@@ -858,8 +880,8 @@ function SettingsModal({ businessName, plan, member, deletePin, customerCount, t
             <BookOpen size={15} color={INK} />
           </div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Download a backup</div>
-            <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>Save a copy of everything outside this device</div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Export as CSV</div>
+            <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>Opens in Excel or Google Sheets</div>
           </div>
         </button>
       </div>
@@ -882,7 +904,7 @@ function SettingsModal({ businessName, plan, member, deletePin, customerCount, t
   );
 }
 
-  // ---------- Recycle bin ----------
+// ---------- Recycle bin ----------
 function RecycleBinModal({ items, customers, onClose, onRestore }) {
   const nameFor = (id) => (customers.find((c) => c.id === id) || {}).name || "Unknown customer";
   return (
