@@ -25,6 +25,7 @@ export default function App() {
     localStorage.setItem("kwuo-amounts-visible", String(amountsVisible));
   }, [amountsVisible]);
 
+  // ---------- auth ----------
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -34,6 +35,7 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // ---------- find (or offer to join/create) a business for this user ----------
   const loadBusiness = useCallback(async () => {
     if (!session) return;
     setBizLoaded(false);
@@ -68,8 +70,12 @@ export default function App() {
     if (session) loadBusiness();
   }, [session, loadBusiness]);
 
+  // ---------- load ledger data + realtime sync ----------
+  const lastLoadRef = React.useRef(0);
+
   const loadData = useCallback(async () => {
     if (!business) return;
+    lastLoadRef.current = Date.now();
     const [{ data: custRows }, { data: txnRows }] = await Promise.all([
       supabase.from("customers").select("*").eq("business_id", business.id).order("name"),
       supabase.from("transactions").select("*").eq("business_id", business.id).order("date", { ascending: false }),
@@ -78,19 +84,28 @@ export default function App() {
     setTxns((txnRows || []).map(rowToTxn));
   }, [business]);
 
+  // Realtime keeps other devices in sync, but skip the echo of our own
+  // just-completed save — reloading twice in a row is what was making
+  // every action feel slow.
+  const loadDataDebounced = useCallback(() => {
+    if (Date.now() - lastLoadRef.current < 1200) return;
+    loadData();
+  }, [loadData]);
+
   useEffect(() => {
     if (!business) return;
     loadData();
 
     const channel = supabase
       .channel(`business-${business.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "customers", filter: `business_id=eq.${business.id}` }, loadData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "transactions", filter: `business_id=eq.${business.id}` }, loadData)
+      .on("postgres_changes", { event: "*", schema: "public", table: "customers", filter: `business_id=eq.${business.id}` }, loadDataDebounced)
+      .on("postgres_changes", { event: "*", schema: "public", table: "transactions", filter: `business_id=eq.${business.id}` }, loadDataDebounced)
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, [business, loadData]);
+  }, [business, loadData, loadDataDebounced]);
 
+  // ---------- CRUD ----------
   async function addCustomer(name, phone) {
     const { data, error } = await supabase
       .from("customers")
@@ -161,18 +176,37 @@ export default function App() {
     setMember((m) => ({ ...m, display_name: name }));
   }
 
+  function csvEscape(val) {
+    const s = String(val ?? "");
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
   function exportBackup() {
     try {
-      const payload = { exportedAt: new Date().toISOString(), business, customers, transactions: txns };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const customerName = (id) => (customers.find((c) => c.id === id) || {}).name || "Unknown";
+      const header = ["Date", "Customer", "Type", "Amount", "Note", "Logged by", "Deleted"];
+      const rows = [...txns]
+        .sort((a, b) => a.date - b.date)
+        .map((t) => [
+          new Date(t.date).toISOString().slice(0, 16).replace("T", " "),
+          customerName(t.customerId),
+          t.type === "sale" ? "Sale" : "Payment",
+          t.amount,
+          t.note || "",
+          t.loggedBy || "",
+          t.deleted ? "Yes" : "No",
+        ]);
+      const csv = [header, ...rows].map((r) => r.map(csvEscape).join(",")).join("\r\n");
+      // BOM so Excel opens the ₦ symbol and other characters correctly
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `kwuo-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `kwuo-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
       return true;
     } catch (e) {
       return false;
@@ -183,6 +217,7 @@ export default function App() {
     await supabase.auth.signOut();
   }
 
+  // ---------- render ----------
   if (!authLoaded || (session && !bizLoaded)) {
     return (
       <div style={{ background: PAPER, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -199,7 +234,7 @@ export default function App() {
   }
 
   const deletedTxns = txns.filter((t) => t.deleted).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
-  const activeTxns = txns;
+  const activeTxns = txns; // Ledger filters deleted where needed
 
   return (
     <Ledger
@@ -224,4 +259,4 @@ export default function App() {
       onSignOut={signOut}
     />
   );
-      }
+}
