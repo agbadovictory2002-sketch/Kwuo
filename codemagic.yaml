@@ -14,6 +14,8 @@ workflows:
           echo "VITE_SUPABASE_URL=$VITE_SUPABASE_URL" > .env
           echo "VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY" >> .env
           npm run build
+      - name: Ensure Capacitor Android package is installed
+        script: npm install @capacitor/android@^6.0.0
       - name: Add Android platform
         script: npx cap add android
       - name: Generate app icon and splash screen
