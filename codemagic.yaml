@@ -2,28 +2,39 @@ workflows:
   kwuo-android-debug:
     name: Kwuo Android (debug build)
     max_build_duration: 30
+
     environment:
       node: 20
+      groups:
+        - kwuo
+
     scripts:
       - name: Install dependencies
         script: npm install
+
       - name: Build the web app
         script: |
           echo "VITE_SUPABASE_URL=$VITE_SUPABASE_URL" > .env
           echo "VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY" >> .env
           npm run build
+
       - name: Ensure Capacitor Android package is installed
         script: npm install @capacitor/android@^6.0.0 @capacitor/cli@^6.0.0
+
       - name: Add Android platform
-        script: npx --yes @capacitor/cli add android
+        script: npx cap add android
+
       - name: Generate app icon and splash screen
-        script: npx --yes @capacitor/assets generate --android
+        script: npx @capacitor/assets generate --android
+
       - name: Sync Capacitor
-        script: npx --yes @capacitor/cli sync android
+        script: npx cap sync android
+
       - name: Build debug APK
         script: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug
+
     artifacts:
       - android/app/build/outputs/**/*.apk
