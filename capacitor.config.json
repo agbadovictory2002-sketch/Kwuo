@@ -1,0 +1,9 @@
+{
+  "appId": "com.kwuo.ledger",
+  "appName": "Kwuo",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}
