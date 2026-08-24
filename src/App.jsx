@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+        import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 import { rowToCustomer, rowToTxn } from "./lib/mappers";
 import AuthScreen from "./components/AuthScreen";
@@ -165,6 +165,12 @@ export default function App() {
     setBusiness((b) => ({ ...b, delete_pin: pin || null }));
   }
 
+  async function saveCurrency(currencyCode) {
+    const { error } = await supabase.from("businesses").update({ currency_code: currencyCode }).eq("id", business.id);
+    if (error) { alert(error.message); throw error; }
+    setBusiness((b) => ({ ...b, currency_code: currencyCode }));
+  }
+
   async function inviteTeammate(email) {
     const { error } = await supabase.from("business_invites").insert({ business_id: business.id, email: email.toLowerCase() });
     return !error;
@@ -253,6 +259,7 @@ export default function App() {
       onRestoreTxn={restoreTxn}
       onSaveBusinessName={saveBusinessName}
       onSavePin={savePin}
+      onSaveCurrency={saveCurrency}
       onInviteTeammate={inviteTeammate}
       onChangeDisplayName={changeDisplayName}
       onExportBackup={exportBackup}
