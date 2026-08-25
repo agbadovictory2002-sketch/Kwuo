@@ -5,20 +5,26 @@ import {
 } from "lucide-react";
 import {
   INK, INK_DARK, ACCENT, PAPER, TEXT, RUST, SAGE, LINE, CARD,
-  cardStyle, inputStyle, labelStyle, FontFaces, naira, fmtDate, waLink,
+  cardStyle, inputStyle, labelStyle, FontFaces, naira, formatMoney, currencyInfo, CURRENCIES, fmtDate, waLink,
 } from "../theme";
 import { parseVoiceEntry } from "../lib/voiceParse";
 
 const AmountVisibilityContext = React.createContext(true);
+const CurrencyContext = React.createContext("NGN");
 function useAmt() {
   const visible = React.useContext(AmountVisibilityContext);
-  return (n) => (visible ? naira(n) : "₦ • • • •");
+  const code = React.useContext(CurrencyContext);
+  return (n) => (visible ? formatMoney(n, code) : currencyInfo(code).symbol + " • • • •");
+}
+function useFmt() {
+  const code = React.useContext(CurrencyContext);
+  return (n) => formatMoney(n, code);
 }
 
 export default function Ledger({
   business, member, customers, txns, deletedTxns,
   onAddCustomer, onLogSale, onRecordPayment, onUpdateTxn, onDeleteTxn, onRestoreTxn,
-  onSaveBusinessName, onSavePin, onInviteTeammate, onChangeDisplayName, onExportBackup, onSignOut,
+  onSaveBusinessName, onSavePin, onSaveCurrency, onInviteTeammate, onChangeDisplayName, onExportBackup, onSignOut,
   amountsVisible, setAmountsVisible,
 }) {
   const [view, setView] = useState("dashboard");
@@ -74,6 +80,7 @@ export default function Ledger({
   const freeLimitHit = business.plan === "free" && customers.length >= 20;
 
   return (
+    <CurrencyContext.Provider value={business.currency_code || "NGN"}>
     <AmountVisibilityContext.Provider value={amountsVisible}>
       <div style={{ background: PAPER, minHeight: "100vh", fontFamily: "'IBM Plex Sans', sans-serif", color: TEXT, paddingBottom: 92, position: "relative" }}>
         <FontFaces />
@@ -106,8 +113,9 @@ export default function Ledger({
             onEditTxn={(id) => { setActiveTxnId(id); setModal("editTxn"); }}
             onRemind={() => {
               const bal = balances[activeCustomer.id] || 0;
-              const msg = `Hello ${activeCustomer.name}, this is a reminder of your outstanding balance of ${naira(bal)}. Kindly settle at your earliest convenience. Thank you.`;
-              window.open(waLink(activeCustomer.phone, msg), "_blank");
+              const code = business.currency_code || "NGN";
+              const msg = `Hello ${activeCustomer.name}, this is a reminder of your outstanding balance of ${formatMoney(bal, code)}. Kindly settle at your earliest convenience. Thank you.`;
+              window.open(waLink(activeCustomer.phone, msg, code), "_blank");
             }}
           />
         )}
@@ -124,7 +132,7 @@ export default function Ledger({
             onSubmit={async (customerId, amount, note, paidNow) => {
               await onLogSale(customerId, amount, note, paidNow);
               setModal(null);
-              showToast(paidNow ? `Logged ${naira(amount)} — paid in full` : `Logged ${naira(amount)} on credit`);
+              showToast(paidNow ? `Logged ${formatMoney(amount, business.currency_code)} — paid in full` : `Logged ${formatMoney(amount, business.currency_code)} on credit`);
             }}
           />
         )}
@@ -138,7 +146,7 @@ export default function Ledger({
         {modal === "recordPayment" && activeCustomer && (
           <RecordPaymentModal customer={activeCustomer} balance={balances[activeCustomer.id] || 0}
             onClose={() => setModal(null)}
-            onSubmit={async (amount, note) => { await onRecordPayment(activeCustomer.id, amount, note); setModal(null); showToast(`Payment of ${naira(amount)} recorded`); }} />
+            onSubmit={async (amount, note) => { await onRecordPayment(activeCustomer.id, amount, note); setModal(null); showToast(`Payment of ${formatMoney(amount, business.currency_code)} recorded`); }} />
         )}
 
         {modal === "editTxn" && (() => {
@@ -156,10 +164,12 @@ export default function Ledger({
         {modal === "settings" && (
           <SettingsModal
             businessName={business.name} plan={business.plan} member={member} deletePin={business.delete_pin}
+            currencyCode={business.currency_code || "NGN"}
             customerCount={customers.length} txnCount={txns.filter((t) => !t.deleted).length} deletedCount={deletedTxns.length}
             onClose={() => setModal(null)}
             onSave={async (name) => { await onSaveBusinessName(name); setModal(null); showToast("Saved"); }}
             onSavePin={async (pin) => { await onSavePin(pin); showToast(pin ? "PIN set" : "PIN removed"); }}
+            onSaveCurrency={async (code) => { await onSaveCurrency(code); showToast("Currency updated"); }}
             onChangeDisplayName={async (name) => { await onChangeDisplayName(name); showToast("Updated"); }}
             onInvite={async (email) => { const ok = await onInviteTeammate(email); showToast(ok ? `Invited ${email}` : "Couldn't send invite"); }}
             onOpenRecycleBin={() => setModal("recycleBin")}
@@ -176,6 +186,7 @@ export default function Ledger({
         {toast && <Toast text={toast} />}
       </div>
     </AmountVisibilityContext.Provider>
+    </CurrencyContext.Provider>
   );
 }
 
@@ -370,9 +381,6 @@ function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPa
           <Wallet size={17} /> Record payment
         </button>
         <button onClick={onRemind} disabled={balance <= 0 || !customer.phone} style={{ flex: 1, background: balance > 0 && customer.phone ? ACCENT : "#F1EEE5", color: balance > 0 && customer.phone ? "#3A2A0A" : "#B7AF9B", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-          <MessageCircle size={17} /> Record payment
-        </button>
-        <button onClick={onRemind} disabled={balance <= 0 || !customer.phone} style={{ flex: 1, background: balance > 0 && customer.phone ? ACCENT : "#F1EEE5", color: balance > 0 && customer.phone ? "#3A2A0A" : "#B7AF9B", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
           <MessageCircle size={17} /> Remind
         </button>
       </div>
@@ -474,6 +482,7 @@ function Sheet({ title, onClose, children }) {
 }
 
 function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, onCreateCustomer }) {
+  const fmt = useFmt();
   const [customerId, setCustomerId] = useState(preselected || "");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -539,7 +548,8 @@ function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, 
       setBusy(false);
     }
   }
-return (
+
+  return (
     <Sheet title="Log a sale" onClose={onClose}>
       {voiceSupported && (
         <div style={{ marginBottom: 16 }}>
@@ -607,11 +617,12 @@ return (
       </button>
 
       <button onClick={submit} disabled={busy} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
-        {busy ? "Saving…" : `Confirm ${amount ? naira(amount) : ""} ${paidNow ? "cash sale" : "on credit"}`}
+        {busy ? "Saving…" : `Confirm ${amount ? fmt(amount) : ""} ${paidNow ? "cash sale" : "on credit"}`}
       </button>
     </Sheet>
   );
 }
+
 function AddCustomerModal({ onClose, onSubmit }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -635,6 +646,7 @@ function AddCustomerModal({ onClose, onSubmit }) {
 }
 
 function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
+  const fmt = useFmt();
   const [amount, setAmount] = useState(String(balance));
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -646,7 +658,7 @@ function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
   }
   return (
     <Sheet title={`Payment from ${customer.name}`} onClose={onClose}>
-      <div style={{ fontSize: 13, color: "#6B6455", marginBottom: 14 }}>Current balance: <span className="num" style={{ fontWeight: 600, color: RUST }}>{naira(balance)}</span></div>
+      <div style={{ fontSize: 13, color: "#6B6455", marginBottom: 14 }}>Current balance: <span className="num" style={{ fontWeight: 600, color: RUST }}>{fmt(balance)}</span></div>
       <label style={labelStyle}>Amount received</label>
       <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" className="num" style={{ ...inputStyle, fontSize: 20, fontWeight: 600 }} />
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -656,13 +668,14 @@ function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
       <label style={labelStyle}>Note (optional)</label>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" style={inputStyle} />
       <button onClick={submit} disabled={busy} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
-        {busy ? "Recording…" : `Record ${amount ? naira(amount) : ""} payment`}
+        {busy ? "Recording…" : `Record ${amount ? fmt(amount) : ""} payment`}
       </button>
     </Sheet>
   );
 }
 
 function EditTxnModal({ txn, deletePin, onClose, onSave, onDelete }) {
+  const fmt = useFmt();
   const [amount, setAmount] = useState(String(txn.amount));
   const [note, setNote] = useState(txn.note || "");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -693,7 +706,7 @@ function EditTxnModal({ txn, deletePin, onClose, onSave, onDelete }) {
     }
     onDelete();
   }
-  
+
   return (
     <Sheet title={`Edit ${txn.type === "sale" ? "sale" : "payment"}`} onClose={onClose}>
       <div style={{ fontSize: 12.5, color: "#8A8270", marginBottom: 14 }}>{fmtDate(txn.date)}</div>
@@ -714,7 +727,7 @@ function EditTxnModal({ txn, deletePin, onClose, onSave, onDelete }) {
           <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 12 }}>
             <AlertCircle size={16} color={RUST} style={{ marginTop: 1, flexShrink: 0 }} />
             <div style={{ fontSize: 13, color: "#6B6455", lineHeight: 1.5 }}>
-              Delete this {txn.type === "sale" ? "sale" : "payment"} of {naira(txn.amount)}? This can't be undone.
+              Delete this {txn.type === "sale" ? "sale" : "payment"} of {fmt(txn.amount)}? This can't be undone.
               {deletePin ? " Enter your PIN to confirm." : (<> Type <b style={{ color: TEXT }}>DELETE</b> below to confirm.</>)}
             </div>
           </div>
@@ -737,8 +750,9 @@ function EditTxnModal({ txn, deletePin, onClose, onSave, onDelete }) {
 }
 
 // ---------- Settings ----------
-function SettingsModal({ businessName, plan, member, deletePin, customerCount, txnCount, deletedCount, onClose, onSave, onSavePin, onChangeDisplayName, onInvite, onOpenRecycleBin, onExport, onSignOut }) {
+function SettingsModal({ businessName, plan, member, deletePin, currencyCode, customerCount, txnCount, deletedCount, onClose, onSave, onSavePin, onSaveCurrency, onChangeDisplayName, onInvite, onOpenRecycleBin, onExport, onSignOut }) {
   const [name, setName] = useState(businessName);
+  const [currency, setCurrency] = useState(currencyCode || "NGN");
   const [editingUser, setEditingUser] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState((member && member.display_name) || "");
   const [editingPin, setEditingPin] = useState(false);
@@ -788,6 +802,20 @@ function SettingsModal({ businessName, plan, member, deletePin, customerCount, t
       <label style={labelStyle}>Business name</label>
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Chidera Stores" style={inputStyle} />
       <button onClick={() => onSave(name)} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "14px", fontSize: 15, fontWeight: 700, marginBottom: 18 }}>Save</button>
+
+      <label style={labelStyle}>Currency &amp; phone country</label>
+      <select
+        value={currency}
+        onChange={(e) => { setCurrency(e.target.value); onSaveCurrency(e.target.value); }}
+        style={{ ...inputStyle, appearance: "none" }}
+      >
+        {CURRENCIES.map((c) => (
+          <option key={c.code} value={c.code}>{c.label} ({c.symbol}) — +{c.dialCode}</option>
+        ))}
+      </select>
+      <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: -8, marginBottom: 18 }}>
+        Sets how amounts are shown and the country code used for WhatsApp reminders.
+      </div>
 
       <div style={{ ...cardStyle, marginBottom: 18, background: plan === "free" ? "#F1EEE5" : "#EAF4EF" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>{plan === "free" ? "Free plan" : "Paid plan"}</div>
@@ -906,6 +934,7 @@ function SettingsModal({ businessName, plan, member, deletePin, customerCount, t
 
 // ---------- Recycle bin ----------
 function RecycleBinModal({ items, customers, onClose, onRestore }) {
+  const fmt = useFmt();
   const nameFor = (id) => (customers.find((c) => c.id === id) || {}).name || "Unknown customer";
   return (
     <Sheet title="Recently deleted" onClose={onClose}>
@@ -920,7 +949,7 @@ function RecycleBinModal({ items, customers, onClose, onRestore }) {
             <div key={t.id} style={{ ...cardStyle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{nameFor(t.customerId)}</div>
-                <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>{t.type === "sale" ? "Sale" : "Payment"} of {naira(t.amount)} · logged {fmtDate(t.date)}</div>
+                <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>{t.type === "sale" ? "Sale" : "Payment"} of {fmt(t.amount)} · logged {fmtDate(t.date)}</div>
                 <div style={{ fontSize: 11, color: RUST, marginTop: 2 }}>deleted {fmtDate(t.deletedAt || t.date)}{t.deletedBy ? ` by ${t.deletedBy}` : ""}</div>
               </div>
               <button onClick={() => onRestore(t.id)} style={{ background: INK, color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, flexShrink: 0 }}>Restore</button>
