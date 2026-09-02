@@ -111,6 +111,7 @@ export default function Ledger({
             onLogSale={() => setModal("logSale")}
             onRecordPayment={() => setModal("recordPayment")}
             onEditTxn={(id) => { setActiveTxnId(id); setModal("editTxn"); }}
+            onOpenStatement={() => setModal("statement")}
             onRemind={() => {
               const bal = balances[activeCustomer.id] || 0;
               const code = business.currency_code || "NGN";
@@ -144,9 +145,23 @@ export default function Ledger({
         )}
 
         {modal === "recordPayment" && activeCustomer && (
-          <RecordPaymentModal customer={activeCustomer} balance={balances[activeCustomer.id] || 0}
+          <RecordPaymentModal
+            customer={activeCustomer}
+            balance={balances[activeCustomer.id] || 0}
+            openSales={(() => {
+              const paidMap = {};
+              for (const t of txns) {
+                if (t.deleted || t.type !== "payment" || !t.appliesToSaleId) continue;
+                paidMap[t.appliesToSaleId] = (paidMap[t.appliesToSaleId] || 0) + t.amount;
+              }
+              return txns
+                .filter((t) => !t.deleted && t.type === "sale" && t.customerId === activeCustomer.id)
+                .map((s) => ({ ...s, remaining: s.amount - (paidMap[s.id] || 0) }))
+                .filter((s) => s.remaining > 0.009)
+                .sort((a, b) => a.date - b.date);
+            })()}
             onClose={() => setModal(null)}
-            onSubmit={async (amount, note) => { await onRecordPayment(activeCustomer.id, amount, note); setModal(null); showToast(`Payment of ${formatMoney(amount, business.currency_code)} recorded`); }} />
+            onSubmit={async (amount, note, startSaleId) => { await onRecordPayment(activeCustomer.id, amount, note, startSaleId); setModal(null); showToast(`Payment of ${formatMoney(amount, business.currency_code)} recorded`); }} />
         )}
 
         {modal === "editTxn" && (() => {
@@ -181,6 +196,15 @@ export default function Ledger({
         {modal === "recycleBin" && (
           <RecycleBinModal items={deletedTxns} customers={customers} onClose={() => setModal(null)}
             onRestore={async (id) => { await onRestoreTxn(id); showToast("Transaction restored"); }} />
+        )}
+
+        {modal === "statement" && activeCustomer && (
+          <StatementModal
+            customer={activeCustomer}
+            businessName={business.name}
+            txns={txns.filter((t) => t.customerId === activeCustomer.id)}
+            onClose={() => setModal(null)}
+          />
         )}
 
         {toast && <Toast text={toast} />}
@@ -337,7 +361,7 @@ function CustomersList({ customers, balances, onOpen, onAdd }) {
 }
 
 // ---------- Customer detail ----------
-function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPayment, onEditTxn, onRemind, amountsVisible, onToggleAmounts }) {
+function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPayment, onEditTxn, onOpenStatement, onRemind, amountsVisible, onToggleAmounts }) {
   const [showFilter, setShowFilter] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -363,7 +387,7 @@ function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPa
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 46, height: 46, borderRadius: 999, background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18 }}>
             {customer.name.charAt(0).toUpperCase()}
-          </div>
+      </div>
           <div>
             <div className="disp" style={{ fontSize: 20, fontWeight: 700 }}>{customer.name}</div>
             {customer.phone && <div style={{ fontSize: 12.5, opacity: 0.75, display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}><Phone size={11} /> {customer.phone}</div>}
@@ -382,6 +406,12 @@ function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPa
         </button>
         <button onClick={onRemind} disabled={balance <= 0 || !customer.phone} style={{ flex: 1, background: balance > 0 && customer.phone ? ACCENT : "#F1EEE5", color: balance > 0 && customer.phone ? "#3A2A0A" : "#B7AF9B", border: "none", borderRadius: 12, padding: "12px 8px", fontWeight: 600, fontSize: 13.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
           <MessageCircle size={17} /> Remind
+        </button>
+      </div>
+
+      <div style={{ padding: "0 16px 8px" }}>
+        <button onClick={onOpenStatement} style={{ width: "100%", background: "#fff", border: `1px solid ${LINE}`, borderRadius: 12, padding: "11px", fontWeight: 600, fontSize: 13, color: INK, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <BookOpen size={15} /> Print statement
         </button>
       </div>
 
@@ -438,9 +468,8 @@ function CustomerDetail({ customer, balance, txns, onBack, onLogSale, onRecordPa
         )}
       </div>
     </div>
-  );
+    );
 }
-
 // ---------- Bottom nav ----------
 function BottomNav({ view, setView, onPlus }) {
   return (
@@ -489,42 +518,62 @@ function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, 
   const [paidNow, setPaidNow] = useState(false);
   const [newName, setNewName] = useState("");
   const [showNew, setShowNew] = useState(customers.length === 0);
-
   const [listening, setListening] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [voiceSupported] = useState(() => typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition));
   const [heard, setHeard] = useState("");
   const [voiceResult, setVoiceResult] = useState(null);
-  const recognitionRef = React.useRef(null);
+  const [voiceSupported, setVoiceSupported] = useState(false);
 
-  function startListening() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-    const rec = new SR();
-    rec.lang = "en-NG";
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-    rec.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      setHeard(transcript);
-      const result = parseVoiceEntry(transcript, customers);
-      setVoiceResult(result);
-      if (result.amount) setAmount(String(result.amount));
-      if (result.customer) { setCustomerId(result.customer.id); setShowNew(false); }
-      else if (customers.length === 0) { setShowNew(true); setNewName(""); }
-      if (result.note) setNote(result.note);
-      setPaidNow(result.paidNow);
-    };
-    rec.onerror = () => setListening(false);
-    rec.onend = () => setListening(false);
-    recognitionRef.current = rec;
-    setHeard(""); setVoiceResult(null);
-    setListening(true);
-    rec.start();
+  useEffect(() => {
+    async function checkSupport() {
+      try {
+        const { SpeechRecognition } = await import("@capacitor-community/speech-recognition");
+        const { available } = await SpeechRecognition.available();
+        setVoiceSupported(available);
+      } catch {
+        setVoiceSupported(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
+      }
+    }
+    checkSupport();
+  }, []);
+
+  function handleTranscript(transcript) {
+    setHeard(transcript);
+    const result = parseVoiceEntry(transcript, customers);
+    setVoiceResult(result);
+    if (result.amount) setAmount(String(result.amount));
+    if (result.customer) { setCustomerId(result.customer.id); setShowNew(false); }
+    else if (customers.length === 0) { setShowNew(true); setNewName(""); }
+    if (result.note) setNote(result.note);
+    setPaidNow(result.paidNow);
+    setListening(false);
   }
 
-  function stopListening() {
-    if (recognitionRef.current) recognitionRef.current.stop();
+  async function startListening() {
+    if (listening) return;
+    setHeard(""); setVoiceResult(null); setListening(true);
+    try {
+      const { SpeechRecognition } = await import("@capacitor-community/speech-recognition");
+      await SpeechRecognition.requestPermissions();
+      const { matches } = await SpeechRecognition.start({ language: "en-NG", maxResults: 1, partialResults: false, popup: false });
+      handleTranscript((matches && matches[0]) || "");
+    } catch {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { setListening(false); return; }
+      const rec = new SR();
+      rec.lang = "en-NG"; rec.interimResults = false; rec.maxAlternatives = 1;
+      rec.onresult = (e) => handleTranscript(e.results[0][0].transcript);
+      rec.onerror = () => setListening(false);
+      rec.onend = () => setListening(false);
+      rec.start();
+    }
+  }
+
+  async function stopListening() {
+    try {
+      const { SpeechRecognition } = await import("@capacitor-community/speech-recognition");
+      await SpeechRecognition.stop();
+    } catch {}
     setListening(false);
   }
 
@@ -539,14 +588,9 @@ function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, 
     if (showNew && (!amt || amt <= 0)) return;
     setBusy(true);
     try {
-      if (showNew) {
-        const c = await onCreateCustomer(newName, "");
-        cid = c.id;
-      }
+      if (showNew) { const c = await onCreateCustomer(newName, ""); cid = c.id; }
       await onSubmit(cid, amt, note.trim(), paidNow);
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   return (
@@ -555,11 +599,7 @@ function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, 
         <div style={{ marginBottom: 16 }}>
           <button
             onClick={listening ? stopListening : startListening}
-            style={{
-              width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-              background: listening ? RUST : "#F1EEE5", color: listening ? "#fff" : INK,
-              border: "none", borderRadius: 14, padding: "14px", fontWeight: 700, fontSize: 14.5,
-            }}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: listening ? RUST : "#F1EEE5", color: listening ? "#fff" : INK, border: "none", borderRadius: 14, padding: "14px", fontWeight: 700, fontSize: 14.5 }}
           >
             <Mic size={18} /> {listening ? "Listening… tap to stop" : "Speak this sale instead"}
           </button>
@@ -568,9 +608,7 @@ function LogSaleModal({ customers, recentItems, preselected, onClose, onSubmit, 
               <div style={{ fontSize: 11, fontWeight: 600, color: "#8A8270", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Heard</div>
               <div style={{ fontSize: 13.5, color: TEXT, fontStyle: "italic", marginBottom: 8 }}>"{heard}"</div>
               <div style={{ fontSize: 11.5, color: voiceResult && voiceResult.amount ? SAGE : RUST }}>
-                {voiceResult && voiceResult.amount
-                  ? `Filled in below — check everything before confirming.`
-                  : `Couldn't find an amount — please fill in the fields below.`}
+                {voiceResult && voiceResult.amount ? "Filled in below — check everything before confirming." : "Couldn't find an amount — please fill in the fields below."}
               </div>
             </div>
           )}
@@ -645,25 +683,51 @@ function AddCustomerModal({ onClose, onSubmit }) {
   );
 }
 
-function RecordPaymentModal({ customer, balance, onClose, onSubmit }) {
+function RecordPaymentModal({ customer, balance, openSales, onClose, onSubmit }) {
   const fmt = useFmt();
+  const [selectedId, setSelectedId] = useState(null);
   const [amount, setAmount] = useState(String(balance));
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+
+  function selectSale(sale) { setSelectedId(sale.id); setAmount(String(sale.remaining)); }
+
   async function submit() {
     const amt = parseFloat(amount);
     if (busy || !amt || amt <= 0) return;
     setBusy(true);
-    try { await onSubmit(amt, note.trim()); } finally { setBusy(false); }
+    try { await onSubmit(amt, note.trim(), selectedId); } finally { setBusy(false); }
   }
+
   return (
     <Sheet title={`Payment from ${customer.name}`} onClose={onClose}>
-      <div style={{ fontSize: 13, color: "#6B6455", marginBottom: 14 }}>Current balance: <span className="num" style={{ fontWeight: 600, color: RUST }}>{fmt(balance)}</span></div>
+      <div style={{ fontSize: 13, color: "#6B6455", marginBottom: 14 }}>Total balance: <span className="num" style={{ fontWeight: 600, color: RUST }}>{fmt(balance)}</span></div>
+
+      {openSales && openSales.length > 0 && (
+        <>
+          <label style={labelStyle}>What is this paying off? (optional)</label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {openSales.map((s) => (
+              <button key={s.id} onClick={() => selectSale(s)} style={{ ...cardStyle, textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", border: selectedId === s.id ? `2px solid ${INK}` : `1px solid ${LINE}` }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{s.note || "Sale"}</div>
+                  <div style={{ fontSize: 11, color: "#8A8270", marginTop: 2 }}>{fmtDate(s.date)}</div>
+                </div>
+                <div className="num" style={{ fontWeight: 600, fontSize: 13.5, color: RUST }}>{fmt(s.remaining)}</div>
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: -8, marginBottom: 14 }}>
+            Leave unselected to pay oldest debt first. Extra spills to the next automatically.
+          </div>
+        </>
+      )}
+
       <label style={labelStyle}>Amount received</label>
       <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" className="num" style={{ ...inputStyle, fontSize: 20, fontWeight: 600 }} />
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button onClick={() => setAmount(String(balance))} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Full balance</button>
-        <button onClick={() => setAmount(String(Math.round(balance / 2)))} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Half</button>
+        <button onClick={() => { setSelectedId(null); setAmount(String(balance)); }} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Full balance</button>
+        <button onClick={() => { setSelectedId(null); setAmount(String(Math.round(balance / 2))); }} style={{ fontSize: 12.5, background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontWeight: 600, color: INK }}>Half</button>
       </div>
       <label style={labelStyle}>Note (optional)</label>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" style={inputStyle} />
@@ -697,12 +761,10 @@ function EditTxnModal({ txn, deletePin, onClose, onSave, onDelete }) {
   function attemptDelete() {
     if (locked) return;
     if (deletePin && pinInput !== deletePin) {
-      const next = attempts + 1;
-      setAttempts(next);
+      const next = attempts + 1; setAttempts(next);
       if (next >= 5) { setLockedUntil(Date.now() + 30000); setPinErr("Too many wrong attempts. Try again in 30 seconds."); }
       else setPinErr(`Incorrect PIN (${5 - next} attempt${5 - next === 1 ? "" : "s"} left)`);
-      setPinInput("");
-      return;
+      setPinInput(""); return;
     }
     onDelete();
   }
@@ -759,18 +821,11 @@ function SettingsModal({ businessName, plan, member, deletePin, currencyCode, cu
   const [pinAction, setPinAction] = useState("set");
   const [verified, setVerified] = useState(false);
   const [currentPin, setCurrentPin] = useState("");
-  const [newPin, setNewPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
   const [pinError, setPinError] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
 
-  function startPinFlow(action) {
-    setPinAction(action); setEditingPin(true); setVerified(!deletePin);
-    setCurrentPin(""); setNewPin(""); setConfirmPin(""); setPinError("");
-  }
-  function verifyCurrent() {
-    if (currentPin === deletePin) { setVerified(true); setPinError(""); } else setPinError("Incorrect PIN");
-  }
+  function startPinFlow(action) { setPinAction(action); setEditingPin(true); setVerified(!deletePin); setCurrentPin(""); setNewPin(""); setConfirmPin(""); setPinError(""); }
+  function verifyCurrent() { if (currentPin === deletePin) { setVerified(true); setPinError(""); } else setPinError("Incorrect PIN"); }
   function submitNewPin() {
     if (!/^\d{4,6}$/.test(newPin)) { setPinError("PIN must be 4-6 digits"); return; }
     if (newPin !== confirmPin) { setPinError("PINs don't match"); return; }
@@ -804,31 +859,18 @@ function SettingsModal({ businessName, plan, member, deletePin, currencyCode, cu
       <button onClick={() => onSave(name)} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 14, padding: "14px", fontSize: 15, fontWeight: 700, marginBottom: 18 }}>Save</button>
 
       <label style={labelStyle}>Currency &amp; phone country</label>
-      <select
-        value={currency}
-        onChange={(e) => { setCurrency(e.target.value); onSaveCurrency(e.target.value); }}
-        style={{ ...inputStyle, appearance: "none" }}
-      >
-        {CURRENCIES.map((c) => (
-          <option key={c.code} value={c.code}>{c.label} ({c.symbol}) — +{c.dialCode}</option>
-        ))}
+      <select value={currency} onChange={(e) => { setCurrency(e.target.value); onSaveCurrency(e.target.value); }} style={{ ...inputStyle, appearance: "none" }}>
+        {CURRENCIES.map((c) => (<option key={c.code} value={c.code}>{c.label} ({c.symbol}) — +{c.dialCode}</option>))}
       </select>
-      <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: -8, marginBottom: 18 }}>
-        Sets how amounts are shown and the country code used for WhatsApp reminders.
-      </div>
+      <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: -8, marginBottom: 18 }}>Sets how amounts are shown and the country code used for WhatsApp reminders.</div>
 
       <div style={{ ...cardStyle, marginBottom: 18, background: plan === "free" ? "#F1EEE5" : "#EAF4EF" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>{plan === "free" ? "Free plan" : "Paid plan"}</div>
-        <div style={{ fontSize: 12, color: "#6B6455", marginTop: 3 }}>
-          {plan === "free" ? `Up to 20 customers, 1 team. ${customerCount}/20 used.` : "Unlimited customers and team members."}
-        </div>
+        <div style={{ fontSize: 12, color: "#6B6455", marginTop: 3 }}>{plan === "free" ? `Up to 20 customers. ${customerCount}/20 used.` : "Unlimited customers and team members."}</div>
       </div>
 
       <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-          <UserPlus size={14} color="#6B6455" />
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#6B6455" }}>Invite a teammate</div>
-        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}><UserPlus size={14} color="#6B6455" /><div style={{ fontSize: 13, fontWeight: 600, color: "#6B6455" }}>Invite a teammate</div></div>
         <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
           <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="their@email.com" type="email" style={{ ...inputStyle, marginBottom: 0, flex: 1 }} />
           <button onClick={() => { if (inviteEmail.trim()) { onInvite(inviteEmail.trim()); setInviteEmail(""); } }} style={{ background: INK, color: "#fff", border: "none", borderRadius: 12, padding: "0 16px", fontWeight: 600, fontSize: 13 }}>Invite</button>
@@ -836,28 +878,21 @@ function SettingsModal({ businessName, plan, member, deletePin, currencyCode, cu
       </div>
 
       <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-          <Lock size={14} color="#6B6455" />
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#6B6455" }}>Delete protection</div>
-        </div>
-
-        {!editingPin && (
-          deletePin ? (
-            <div style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ fontSize: 13 }}>PIN required to delete a logged sale</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => startPinFlow("change")} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: INK }}>Change</button>
-                <button onClick={() => startPinFlow("remove")} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: RUST }}>Remove</button>
-              </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}><Lock size={14} color="#6B6455" /><div style={{ fontSize: 13, fontWeight: 600, color: "#6B6455" }}>Delete protection</div></div>
+        {!editingPin && (deletePin ? (
+          <div style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 13 }}>PIN required to delete a logged sale</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => startPinFlow("change")} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: INK }}>Change</button>
+              <button onClick={() => startPinFlow("remove")} style={{ background: "#F1EEE5", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: RUST }}>Remove</button>
             </div>
-          ) : (
-            <div style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ fontSize: 13, color: "#6B6455" }}>No PIN set — anyone can delete a sale</div>
-              <button onClick={() => startPinFlow("set")} style={{ background: INK, border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: "#fff" }}>Set PIN</button>
-            </div>
-          )
-        )}
-
+          </div>
+        ) : (
+          <div style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 13, color: "#6B6455" }}>No PIN set — anyone can delete a sale</div>
+            <button onClick={() => startPinFlow("set")} style={{ background: INK, border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600, color: "#fff" }}>Set PIN</button>
+          </div>
+        ))}
         {editingPin && !verified && (
           <div style={cardStyle}>
             <div style={{ fontSize: 12.5, marginBottom: 8, color: "#6B6455" }}>Enter your current PIN to continue</div>
@@ -869,7 +904,6 @@ function SettingsModal({ businessName, plan, member, deletePin, currencyCode, cu
             </div>
           </div>
         )}
-
         {editingPin && verified && pinAction !== "remove" && (
           <div style={cardStyle}>
             <div style={{ fontSize: 12.5, marginBottom: 8, color: "#6B6455" }}>{pinAction === "set" ? "Choose a 4-6 digit PIN" : "Choose a new 4-6 digit PIN"}</div>
@@ -882,7 +916,6 @@ function SettingsModal({ businessName, plan, member, deletePin, currencyCode, cu
             </div>
           </div>
         )}
-
         {editingPin && verified && pinAction === "remove" && (
           <div style={cardStyle}>
             <div style={{ fontSize: 13, marginBottom: 10, color: "#6B6455" }}>Remove PIN protection? Anyone on the team will be able to delete a logged sale without one.</div>
@@ -897,32 +930,18 @@ function SettingsModal({ businessName, plan, member, deletePin, currencyCode, cu
       <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 16, marginTop: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: "#6B6455", marginBottom: 10 }}>Data safety</div>
         <button onClick={onOpenRecycleBin} style={{ ...cardStyle, width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, textAlign: "left" }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Recently deleted</div>
-            <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>Deleted sales are kept here, not erased</div>
-          </div>
+          <div><div style={{ fontSize: 13, fontWeight: 600 }}>Recently deleted</div><div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>Deleted sales are kept here, not erased</div></div>
           <div className="num" style={{ fontSize: 15, fontWeight: 700, color: deletedCount > 0 ? ACCENT : "#B7AF9B" }}>{deletedCount}</div>
         </button>
         <button onClick={onExport} style={{ ...cardStyle, width: "100%", display: "flex", alignItems: "center", gap: 10, textAlign: "left" }}>
-          <div style={{ width: 32, height: 32, borderRadius: 999, background: "#F1EEE5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <BookOpen size={15} color={INK} />
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Export as CSV</div>
-            <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>Opens in Excel or Google Sheets</div>
-          </div>
+          <div style={{ width: 32, height: 32, borderRadius: 999, background: "#F1EEE5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><BookOpen size={15} color={INK} /></div>
+          <div><div style={{ fontSize: 13, fontWeight: 600 }}>Export as CSV</div><div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>Opens in Excel or Google Sheets</div></div>
         </button>
       </div>
 
       <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 16, marginTop: 16, display: "flex", gap: 20 }}>
-        <div>
-          <div className="num" style={{ fontSize: 20, fontWeight: 600, color: INK }}>{customerCount}</div>
-          <div style={{ fontSize: 11.5, color: "#8A8270" }}>customers</div>
-        </div>
-        <div>
-          <div className="num" style={{ fontSize: 20, fontWeight: 600, color: INK }}>{txnCount}</div>
-          <div style={{ fontSize: 11.5, color: "#8A8270" }}>transactions logged</div>
-        </div>
+        <div><div className="num" style={{ fontSize: 20, fontWeight: 600, color: INK }}>{customerCount}</div><div style={{ fontSize: 11.5, color: "#8A8270" }}>customers</div></div>
+        <div><div className="num" style={{ fontSize: 20, fontWeight: 600, color: INK }}>{txnCount}</div><div style={{ fontSize: 11.5, color: "#8A8270" }}>transactions logged</div></div>
       </div>
 
       <button onClick={onSignOut} style={{ width: "100%", background: "none", border: `1px solid ${LINE}`, color: "#6B6455", borderRadius: 14, padding: "13px", fontSize: 14, fontWeight: 600, marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
@@ -931,25 +950,20 @@ function SettingsModal({ businessName, plan, member, deletePin, currencyCode, cu
     </Sheet>
   );
 }
-
 // ---------- Recycle bin ----------
 function RecycleBinModal({ items, customers, onClose, onRestore }) {
   const fmt = useFmt();
   const nameFor = (id) => (customers.find((c) => c.id === id) || {}).name || "Unknown customer";
   return (
     <Sheet title="Recently deleted" onClose={onClose}>
-      <div style={{ fontSize: 12.5, color: "#6B6455", marginBottom: 14, lineHeight: 1.5 }}>
-        Deleted sales and payments land here instead of disappearing. Restore anything removed by mistake — or by someone who shouldn't have.
-      </div>
-      {items.length === 0 ? (
-        <EmptyState icon={<Clock size={24} color={INK} />} text="Nothing deleted yet." />
-      ) : (
+      <div style={{ fontSize: 12.5, color: "#6B6455", marginBottom: 14, lineHeight: 1.5 }}>Deleted sales and payments land here instead of disappearing. Restore anything removed by mistake.</div>
+      {items.length === 0 ? (<EmptyState icon={<Clock size={24} color={INK} />} text="Nothing deleted yet." />) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {items.map((t) => (
             <div key={t.id} style={{ ...cardStyle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{nameFor(t.customerId)}</div>
-                <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>{t.type === "sale" ? "Sale" : "Payment"} of {fmt(t.amount)} · logged {fmtDate(t.date)}</div>
+                <div style={{ fontSize: 11.5, color: "#8A8270", marginTop: 2 }}>{t.type === "sale" ? "Sale" : "Payment"} of {fmt(t.amount)} · {fmtDate(t.date)}</div>
                 <div style={{ fontSize: 11, color: RUST, marginTop: 2 }}>deleted {fmtDate(t.deletedAt || t.date)}{t.deletedBy ? ` by ${t.deletedBy}` : ""}</div>
               </div>
               <button onClick={() => onRestore(t.id)} style={{ background: INK, color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, flexShrink: 0 }}>Restore</button>
@@ -958,6 +972,94 @@ function RecycleBinModal({ items, customers, onClose, onRestore }) {
         </div>
       )}
     </Sheet>
+  );
+}
+
+// ---------- Statement ----------
+function rangeFor(preset, customFrom, customTo) {
+  const now = new Date();
+  if (preset === "thisMonth") return { from: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), to: now.getTime() };
+  if (preset === "lastMonth") return { from: new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime(), to: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999).getTime() };
+  if (preset === "thisYear") return { from: new Date(now.getFullYear(), 0, 1).getTime(), to: now.getTime() };
+  if (preset === "custom") return { from: customFrom ? new Date(customFrom).setHours(0, 0, 0, 0) : 0, to: customTo ? new Date(customTo).setHours(23, 59, 59, 999) : now.getTime() };
+  return { from: 0, to: now.getTime() };
+}
+
+function StatementModal({ customer, businessName, txns, onClose }) {
+  const [preset, setPreset] = useState("thisMonth");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const fmt = useFmt();
+
+  const { from, to } = rangeFor(preset, customFrom, customTo);
+  const sorted = [...txns].filter((t) => !t.deleted).sort((a, b) => a.date - b.date);
+  const openingBalance = sorted.filter((t) => t.date < from).reduce((s, t) => s + (t.type === "sale" ? t.amount : -t.amount), 0);
+  let running = openingBalance;
+  const rows = sorted.filter((t) => t.date >= from && t.date <= to).map((t) => { running += t.type === "sale" ? t.amount : -t.amount; return { ...t, running }; });
+
+  const presetBtn = (key, label) => (
+    <button onClick={() => setPreset(key)} style={{ flex: 1, padding: "9px 4px", borderRadius: 10, border: "none", fontSize: 12, fontWeight: 600, background: preset === key ? INK : "#F1EEE5", color: preset === key ? "#fff" : "#4A4636" }}>{label}</button>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: PAPER, zIndex: 500, overflowY: "auto" }}>
+      <style>{`@media print { .no-print { display: none !important; } }`}</style>
+
+      <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 16px 8px" }}>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: INK, display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 600 }}><X size={16} /> Close</button>
+        <button onClick={() => window.print()} style={{ background: INK, color: "#fff", border: "none", borderRadius: 10, padding: "9px 16px", fontWeight: 700, fontSize: 13.5 }}>Print</button>
+      </div>
+
+      <div className="no-print" style={{ padding: "0 16px 14px" }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          {presetBtn("thisMonth", "This Month")}{presetBtn("lastMonth", "Last Month")}{presetBtn("thisYear", "This Year")}{presetBtn("allTime", "All Time")}
+        </div>
+        <button onClick={() => setPreset("custom")} style={{ width: "100%", padding: "9px 4px", borderRadius: 10, border: "none", fontSize: 12, fontWeight: 600, background: preset === "custom" ? INK : "#F1EEE5", color: preset === "custom" ? "#fff" : "#4A4636", marginBottom: preset === "custom" ? 8 : 0 }}>Custom range</button>
+        {preset === "custom" && (
+          <div style={{ ...cardStyle, display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ flex: 1 }}><div style={{ fontSize: 10.5, color: "#8A8270", marginBottom: 3 }}>From</div><input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ width: "100%", border: "none", fontSize: 13, fontFamily: "inherit" }} /></div>
+            <div style={{ width: 1, height: 28, background: LINE }} />
+            <div style={{ flex: 1 }}><div style={{ fontSize: 10.5, color: "#8A8270", marginBottom: 3 }}>To</div><input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ width: "100%", border: "none", fontSize: 13, fontFamily: "inherit" }} /></div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: "8px 16px 40px" }}>
+        <div style={{ textAlign: "center", marginBottom: 18 }}>
+          <div className="disp" style={{ fontSize: 20, fontWeight: 700, color: INK_DARK }}>{businessName || "Kwuo"}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginTop: 6 }}>Statement of Account</div>
+          <div style={{ fontSize: 12.5, color: "#6B6455", marginTop: 2 }}>{customer.name}</div>
+          <div style={{ fontSize: 11, color: "#8A8270", marginTop: 2 }}>{new Date(from).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric" })} – {new Date(to).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric" })}</div>
+        </div>
+
+        <div style={{ ...cardStyle, display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ fontSize: 12.5, color: "#6B6455" }}>Balance brought forward</div>
+          <div className="num" style={{ fontSize: 13, fontWeight: 700 }}>{fmt(openingBalance)}</div>
+        </div>
+
+        {rows.length === 0 ? (<EmptyState icon={<Clock size={22} color={INK} />} text="No activity in this period." />) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {rows.map((t) => (
+              <div key={t.id} style={{ ...cardStyle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{t.type === "sale" ? "Sale" : "Payment"}{t.note ? " · " + t.note : ""}</div>
+                  <div style={{ fontSize: 10.5, color: "#8A8270", marginTop: 2 }}>{fmtDate(t.date)}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div className="num" style={{ fontSize: 13, fontWeight: 600, color: t.type === "sale" ? RUST : SAGE }}>{t.type === "sale" ? "+" : "−"}{fmt(t.amount)}</div>
+                  <div className="num" style={{ fontSize: 10.5, color: "#8A8270", marginTop: 2 }}>bal {fmt(t.running)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ ...cardStyle, display: "flex", justifyContent: "space-between", marginTop: 12, background: INK }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Closing balance</div>
+          <div className="num" style={{ fontSize: 15, fontWeight: 700, color: running > 0 ? ACCENT : "#DFF3E8" }}>{fmt(running)}</div>
+        </div>
+      </div>
+    </div>
   );
 }
 
