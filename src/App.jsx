@@ -1,18 +1,26 @@
-        import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 import { rowToCustomer, rowToTxn } from "./lib/mappers";
 import AuthScreen from "./components/AuthScreen";
 import BusinessOnboarding from "./components/BusinessOnboarding";
 import Ledger from "./components/Ledger";
+import AnimatedSplash from "./components/AnimatedSplash";
 import { INK, PAPER, FontFaces } from "./theme";
 
 export default function App() {
   const [authLoaded, setAuthLoaded] = useState(false);
   const [session, setSession] = useState(null);
+  const [splashMinTimeUp, setSplashMinTimeUp] = useState(false);
 
   const [bizLoaded, setBizLoaded] = useState(false);
   const [business, setBusiness] = useState(null);
   const [member, setMember] = useState(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSplashMinTimeUp(true), 1300);
+    return () => clearTimeout(t);
+  }, []);
+
   const [pendingInvite, setPendingInvite] = useState(null);
 
   const [customers, setCustomers] = useState([]);
@@ -25,7 +33,6 @@ export default function App() {
     localStorage.setItem("kwuo-amounts-visible", String(amountsVisible));
   }, [amountsVisible]);
 
-  // ---------- auth ----------
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -35,7 +42,6 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // ---------- find (or offer to join/create) a business for this user ----------
   const loadBusiness = useCallback(async () => {
     if (!session) return;
     setBizLoaded(false);
@@ -70,7 +76,6 @@ export default function App() {
     if (session) loadBusiness();
   }, [session, loadBusiness]);
 
-  // ---------- load ledger data + realtime sync ----------
   const lastLoadRef = React.useRef(0);
 
   const loadData = useCallback(async () => {
@@ -84,9 +89,6 @@ export default function App() {
     setTxns((txnRows || []).map(rowToTxn));
   }, [business]);
 
-  // Realtime keeps other devices in sync, but skip the echo of our own
-  // just-completed save — reloading twice in a row is what was making
-  // every action feel slow.
   const loadDataDebounced = useCallback(() => {
     if (Date.now() - lastLoadRef.current < 1200) return;
     loadData();
@@ -105,7 +107,6 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [business, loadData, loadDataDebounced]);
 
-  // ---------- CRUD ----------
   async function addCustomer(name, phone) {
     const { data, error } = await supabase
       .from("customers")
@@ -126,9 +127,37 @@ export default function App() {
     await loadData();
   }
 
-  async function recordPayment(customerId, amount, note) {
+  async function recordPayment(customerId, amount, note, startSaleId) {
     const by = (member && member.display_name) || "";
-    const { error } = await supabase.from("transactions").insert({ business_id: business.id, customer_id: customerId, type: "payment", amount, note, logged_by_name: by });
+    const openSales = txns
+      .filter((t) => !t.deleted && t.type === "sale" && t.customerId === customerId)
+      .map((s) => {
+        const paid = txns
+          .filter((t) => !t.deleted && t.type === "payment" && t.appliesToSaleId === s.id)
+          .reduce((sum, p) => sum + p.amount, 0);
+        return { ...s, remaining: s.amount - paid };
+      })
+      .filter((s) => s.remaining > 0.009)
+      .sort((a, b) => a.date - b.date);
+
+    let order = openSales;
+    if (startSaleId) {
+      const chosen = openSales.find((s) => s.id === startSaleId);
+      if (chosen) order = [chosen, ...openSales.filter((s) => s.id !== startSaleId)];
+    }
+
+    let remainingAmt = amount;
+    const rows = [];
+    for (const sale of order) {
+      if (remainingAmt <= 0) break;
+      const applyAmt = Math.min(remainingAmt, sale.remaining);
+      rows.push({ business_id: business.id, customer_id: customerId, type: "payment", amount: applyAmt, note, applies_to_sale_id: sale.id, logged_by_name: by });
+      remainingAmt -= applyAmt;
+    }
+    if (remainingAmt > 0.009) {
+      rows.push({ business_id: business.id, customer_id: customerId, type: "payment", amount: remainingAmt, note, applies_to_sale_id: null, logged_by_name: by });
+    }
+    const { error } = await supabase.from("transactions").insert(rows);
     if (error) { alert(error.message); throw error; }
     await loadData();
   }
@@ -203,7 +232,6 @@ export default function App() {
           t.deleted ? "Yes" : "No",
         ]);
       const csv = [header, ...rows].map((r) => r.map(csvEscape).join(",")).join("\r\n");
-      // BOM so Excel opens the ₦ symbol and other characters correctly
       const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -223,14 +251,8 @@ export default function App() {
     await supabase.auth.signOut();
   }
 
-  // ---------- render ----------
-  if (!authLoaded || (session && !bizLoaded)) {
-    return (
-      <div style={{ background: PAPER, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <FontFaces />
-        <div style={{ color: INK, fontFamily: "'IBM Plex Sans', sans-serif", opacity: 0.6 }}>Opening ledger…</div>
-      </div>
-    );
+  if (!authLoaded || !splashMinTimeUp || (session && !bizLoaded)) {
+    return <AnimatedSplash />;
   }
 
   if (!session) return <AuthScreen />;
@@ -240,7 +262,7 @@ export default function App() {
   }
 
   const deletedTxns = txns.filter((t) => t.deleted).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
-  const activeTxns = txns; // Ledger filters deleted where needed
+  const activeTxns = txns;
 
   return (
     <Ledger
