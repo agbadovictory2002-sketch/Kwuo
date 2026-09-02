@@ -11,6 +11,7 @@ export function rowToTxn(row) {
   return {
     id: row.id,
     customerId: row.customer_id,
+    appliesToSaleId: row.applies_to_sale_id || null,
     type: row.type,
     amount: Number(row.amount),
     note: row.note || "",
