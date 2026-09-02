@@ -27,8 +27,11 @@ export function FontFaces() {
       ::placeholder { color: #B7AF9B; }
       @keyframes riseIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      @keyframes drawCheck { from { stroke-dashoffset: 140; } to { stroke-dashoffset: 0; } }
+      @keyframes popIn { from { opacity: 0; transform: scale(0.7); } to { opacity: 1; transform: scale(1); } }
+      @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
       @media (prefers-reduced-motion: reduce) {
-        .rise-anim, .sheet-anim { animation: none !important; }
+              .splash-icon, .splash-check, .splash-text { animation: none !important; opacity: 1 !important; stroke-dashoffset: 0 !important; }
       }
     `}</style>
   );
