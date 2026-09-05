@@ -81,12 +81,25 @@ export default function App() {
   const loadData = useCallback(async () => {
     if (!business) return;
     lastLoadRef.current = Date.now();
-    const [{ data: custRows }, { data: txnRows }] = await Promise.all([
-      supabase.from("customers").select("*").eq("business_id", business.id).order("name"),
-      supabase.from("transactions").select("*").eq("business_id", business.id).order("date", { ascending: false }),
-    ]);
-    setCustomers((custRows || []).map(rowToCustomer));
-    setTxns((txnRows || []).map(rowToTxn));
+    try {
+      const [{ data: custRows }, { data: txnRows }] = await Promise.all([
+        supabase.from("customers").select("*").eq("business_id", business.id).order("name"),
+        supabase.from("transactions").select("*").eq("business_id", business.id).order("date", { ascending: false }),
+      ]);
+      const loadedCusts = (custRows || []).map(rowToCustomer);
+      const loadedTxns = (txnRows || []).map(rowToTxn);
+
+      setCustomers(loadedCusts);
+      setTxns(loadedTxns);
+
+      localStorage.setItem(`kwuo_customers_${business.id}`, JSON.stringify(loadedCusts));
+      localStorage.setItem(`kwuo_txns_${business.id}`, JSON.stringify(loadedTxns));
+    } catch (e) {
+      const cachedCusts = localStorage.getItem(`kwuo_customers_${business.id}`);
+      const cachedTxns = localStorage.getItem(`kwuo_txns_${business.id}`);
+      if (cachedCusts) setCustomers(JSON.parse(cachedCusts));
+      if (cachedTxns) setTxns(JSON.parse(cachedTxns));
+    }
   }, [business]);
 
   const loadDataDebounced = useCallback(() => {
@@ -265,27 +278,31 @@ export default function App() {
   const activeTxns = txns;
 
   return (
-    <Ledger
-      business={business}
-      member={member}
-      customers={customers}
-      txns={activeTxns}
-      deletedTxns={deletedTxns}
-      amountsVisible={amountsVisible}
-      setAmountsVisible={setAmountsVisible}
-      onAddCustomer={addCustomer}
-      onLogSale={logSale}
-      onRecordPayment={recordPayment}
-      onUpdateTxn={updateTxn}
-      onDeleteTxn={deleteTxn}
-      onRestoreTxn={restoreTxn}
-      onSaveBusinessName={saveBusinessName}
-      onSavePin={savePin}
-      onSaveCurrency={saveCurrency}
-      onInviteTeammate={inviteTeammate}
-      onChangeDisplayName={changeDisplayName}
-      onExportBackup={exportBackup}
-      onSignOut={signOut}
-    />
+    <>
+      <FontFaces />
+      <Ledger
+        business={business}
+        member={member}
+        customers={customers}
+        txns={activeTxns}
+        deletedTxns={deletedTxns}
+        amountsVisible={amountsVisible}
+        setAmountsVisible={setAmountsVisible}
+        onAddCustomer={addCustomer}
+        onLogSale={logSale}
+        onRecordPayment={recordPayment}
+        onUpdateTxn={updateTxn}
+        onDeleteTxn={deleteTxn}
+        onRestoreTxn={restoreTxn}
+        onSaveBusinessName={saveBusinessName}
+        onSavePin={savePin}
+        onSaveCurrency={saveCurrency}
+        onInviteTeammate={inviteTeammate}
+        onChangeDisplayName={changeDisplayName}
+        onExportBackup={exportBackup}
+        onSignOut={signOut}
+      />
+    </>
   );
-}
+        }
+                                                                
