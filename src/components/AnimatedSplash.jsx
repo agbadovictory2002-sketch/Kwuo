@@ -12,7 +12,6 @@ export default function AnimatedSplash({ onComplete }) {
 
   return (
     <>
-      {/* Injecting keyframes directly guarantees the animations always work */}
       <style>{`
         @keyframes bouncePop { 0% { transform: scale(0); opacity: 0; } 55% { transform: scale(1.15); opacity: 1; } 75% { transform: scale(0.94); } 100% { transform: scale(1); } }
         @keyframes ringPulse { 0% { transform: scale(0.6); opacity: 0.55; } 100% { transform: scale(2.2); opacity: 0; } }
@@ -32,7 +31,7 @@ export default function AnimatedSplash({ onComplete }) {
           <div
             style={{
               position: "absolute", width: 96, height: 96, borderRadius: "50%",
-              border: \`3px solid \${ACCENT}\`, opacity: 0,
+              border: `3px solid ${ACCENT}`, opacity: 0,
               animation: "ringPulse 0.7s 0.05s cubic-bezier(.2,.7,.3,1) forwards",
             }}
           />
