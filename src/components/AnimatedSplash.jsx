@@ -1,9 +1,27 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { INK, ACCENT } from "../theme";
 
-export default function AnimatedSplash() {
+export default function AnimatedSplash({ onComplete }) {
+  const [isFading, setIsFading] = useState(false);
+
+  useEffect(() => {
+    // Triggers fade out after 2 seconds
+    const fadeTimer = setTimeout(() => setIsFading(true), 2000);
+    // Unmounts component completely after 2.4 seconds
+    const removeTimer = setTimeout(() => onComplete && onComplete(), 2400);
+    
+    return () => { clearTimeout(fadeTimer); clearTimeout(removeTimer); };
+  }, [onComplete]);
+
   return (
-    <div style={{ background: INK, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+    <div 
+      style={{ 
+        position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999,
+        background: INK, display: "flex", flexDirection: "column", 
+        alignItems: "center", justifyContent: "center", overflow: "hidden",
+        opacity: isFading ? 0 : 1, transition: "opacity 0.4s ease-out"
+      }}
+    >
       <div style={{ position: "relative", width: 96, height: 96, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div
           className="splash-ring"
