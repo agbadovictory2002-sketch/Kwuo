@@ -15,14 +15,29 @@ export default function App() {
   const [bizLoaded, setBizLoaded] = useState(false);
   const [business, setBusiness] = useState(null);
   const [member, setMember] = useState(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
     const t = setTimeout(() => setSplashMinTimeUp(true), 1300);
     return () => clearTimeout(t);
   }, []);
 
-  const [pendingInvite, setPendingInvite] = useState(null);
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      if (business) processOfflineQueue();
+    };
+    const handleOffline = () => setIsOnline(false);
 
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [business]);
+
+  const [pendingInvite, setPendingInvite] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [txns, setTxns] = useState([]);
   const [amountsVisible, setAmountsVisible] = useState(
@@ -37,6 +52,8 @@ export default function App() {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setAuthLoaded(true);
+    }).catch(() => {
+      setAuthLoaded(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
@@ -45,36 +62,74 @@ export default function App() {
   const loadBusiness = useCallback(async () => {
     if (!session) return;
     setBizLoaded(false);
-    const { data: memberships } = await supabase
-      .from("business_members")
-      .select("*, businesses(*)")
-      .eq("user_id", session.user.id)
-      .limit(1);
 
-    if (memberships && memberships.length > 0) {
-      setMember(memberships[0]);
-      setBusiness(memberships[0].businesses);
-      setPendingInvite(null);
+    if (!navigator.onLine) {
+      const cachedBiz = localStorage.getItem("kwuo_cached_business") || localStorage.getItem(`kwuo_business_${session.user.id}`);
+      const cachedMem = localStorage.getItem("kwuo_cached_member") || localStorage.getItem(`kwuo_member_${session.user.id}`);
+      if (cachedBiz && cachedMem) {
+        setBusiness(JSON.parse(cachedBiz));
+        setMember(JSON.parse(cachedMem));
+        setPendingInvite(null);
+      }
       setBizLoaded(true);
       return;
     }
 
-    const email = session.user.email;
-    const { data: invites } = await supabase
-      .from("business_invites")
-      .select("*")
-      .ilike("email", email)
-      .limit(1);
+    try {
+      const { data: memberships, error } = await supabase
+        .from("business_members")
+        .select("*, businesses(*)")
+        .eq("user_id", session.user.id)
+        .limit(1);
 
-    setPendingInvite(invites && invites.length > 0 ? invites[0] : null);
-    setBusiness(null);
-    setMember(null);
-    setBizLoaded(true);
+      if (error) throw error;
+
+      if (memberships && memberships.length > 0) {
+        setMember(memberships[0]);
+        setBusiness(memberships[0].businesses);
+        setPendingInvite(null);
+        localStorage.setItem("kwuo_cached_business", JSON.stringify(memberships[0].businesses));
+        localStorage.setItem("kwuo_cached_member", JSON.stringify(memberships[0]));
+        setBizLoaded(true);
+        return;
+      }
+
+      const email = session.user.email;
+      const { data: invites } = await supabase
+        .from("business_invites")
+        .select("*")
+        .ilike("email", email)
+        .limit(1);
+
+      setPendingInvite(invites && invites.length > 0 ? invites[0] : null);
+      setBusiness(null);
+      setMember(null);
+      setBizLoaded(true);
+    } catch (e) {
+      const cachedBiz = localStorage.getItem("kwuo_cached_business") || localStorage.getItem(`kwuo_business_${session.user.id}`);
+      const cachedMem = localStorage.getItem("kwuo_cached_member") || localStorage.getItem(`kwuo_member_${session.user.id}`);
+      if (cachedBiz && cachedMem) {
+        setBusiness(JSON.parse(cachedBiz));
+        setMember(JSON.parse(cachedMem));
+      }
+      setBizLoaded(true);
+    }
   }, [session]);
 
   useEffect(() => {
     if (session) loadBusiness();
   }, [session, loadBusiness]);
+
+  useEffect(() => {
+    if (business && session) {
+      localStorage.setItem(`kwuo_business_${session.user.id}`, JSON.stringify(business));
+      localStorage.setItem("kwuo_cached_business", JSON.stringify(business));
+      if (member) {
+        localStorage.setItem(`kwuo_member_${session.user.id}`, JSON.stringify(member));
+        localStorage.setItem("kwuo_cached_member", JSON.stringify(member));
+      }
+    }
+  }, [business, member, session]);
 
   const lastLoadRef = React.useRef(0);
 
@@ -102,6 +157,56 @@ export default function App() {
     }
   }, [business]);
 
+  const saveOfflineAction = (actionType, payload, tempId = null) => {
+    const queueKey = `kwuo_queue_${business.id}`;
+    const existingQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
+    existingQueue.push({ type: actionType, payload, tempId, timestamp: Date.now() });
+    localStorage.setItem(queueKey, JSON.stringify(existingQueue));
+  };
+
+  const processOfflineQueue = async () => {
+    if (!business || !navigator.onLine) return;
+    const queueKey = `kwuo_queue_${business.id}`;
+    let existingQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
+    if (existingQueue.length === 0) return;
+
+    const idMap = {}; 
+    const remainingQueue = [];
+
+    for (let i = 0; i < existingQueue.length; i++) {
+      const item = existingQueue[i];
+      try {
+        if (item.type === "ADD_CUSTOMER") {
+          const { data, error } = await supabase.from("customers").insert(item.payload).select().single();
+          if (error) throw error;
+          if (item.tempId) idMap[item.tempId] = data.id;
+        } else if (item.type === "INSERT_TXN") {
+          const rowsToInsert = item.payload.map(row => {
+            if (idMap[row.customer_id]) {
+              return { ...row, customer_id: idMap[row.customer_id] };
+            }
+            return row;
+          });
+          const { error } = await supabase.from("transactions").insert(rowsToInsert);
+          if (error) throw error;
+        } else if (item.type === "UPDATE_TXN") {
+          const { error } = await supabase.from("transactions").update(item.payload.updates).eq("id", item.payload.id);
+          if (error) throw error;
+        }
+      } catch (err) {
+        remainingQueue.push(...existingQueue.slice(i));
+        break; 
+      }
+    }
+
+    if (remainingQueue.length > 0) {
+      localStorage.setItem(queueKey, JSON.stringify(remainingQueue));
+    } else {
+      localStorage.removeItem(queueKey);
+    }
+    await loadData();
+  };
+
   const loadDataDebounced = useCallback(() => {
     if (Date.now() - lastLoadRef.current < 1200) return;
     loadData();
@@ -110,6 +215,7 @@ export default function App() {
   useEffect(() => {
     if (!business) return;
     loadData();
+    processOfflineQueue();
 
     const channel = supabase
       .channel(`business-${business.id}`)
@@ -121,23 +227,53 @@ export default function App() {
   }, [business, loadData, loadDataDebounced]);
 
   async function addCustomer(name, phone) {
-    const { data, error } = await supabase
-      .from("customers")
-      .insert({ business_id: business.id, name: name.trim(), phone: (phone || "").trim() })
-      .select()
-      .single();
-    if (error) { alert(error.message); throw error; }
-    await loadData();
-    return rowToCustomer(data);
+    const customerPayload = { business_id: business.id, name: name.trim(), phone: (phone || "").trim() };
+    const tempId = "local_" + Date.now();
+    const newCustObj = { id: tempId, businessId: business.id, name: name.trim(), phone: (phone || "").trim() };
+
+    if (!navigator.onLine) {
+      const updatedCusts = [newCustObj, ...customers];
+      setCustomers(updatedCusts);
+      localStorage.setItem(`kwuo_customers_${business.id}`, JSON.stringify(updatedCusts));
+      saveOfflineAction("ADD_CUSTOMER", customerPayload, tempId);
+      return newCustObj;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("customers")
+        .insert(customerPayload)
+        .select()
+        .single();
+      if (error) throw error;
+      await loadData();
+      return rowToCustomer(data);
+    } catch (e) {
+      const updatedCusts = [newCustObj, ...customers];
+      setCustomers(updatedCusts);
+      localStorage.setItem(`kwuo_customers_${business.id}`, JSON.stringify(updatedCusts));
+      saveOfflineAction("ADD_CUSTOMER", customerPayload, tempId);
+      return newCustObj;
+    }
   }
 
   async function logSale(customerId, amount, note, paidNow) {
     const by = (member && member.display_name) || "";
     const rows = [{ business_id: business.id, customer_id: customerId, type: "sale", amount, note, logged_by_name: by }];
     if (paidNow) rows.push({ business_id: business.id, customer_id: customerId, type: "payment", amount, note: "Paid at point of sale", logged_by_name: by });
-    const { error } = await supabase.from("transactions").insert(rows);
-    if (error) { alert(error.message); throw error; }
-    await loadData();
+
+    if (!navigator.onLine) {
+      saveOfflineAction("INSERT_TXN", rows);
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from("transactions").insert(rows);
+      if (error) throw error;
+      await loadData();
+    } catch (e) {
+      saveOfflineAction("INSERT_TXN", rows);
+    }
   }
 
   async function recordPayment(customerId, amount, note, startSaleId) {
@@ -170,58 +306,141 @@ export default function App() {
     if (remainingAmt > 0.009) {
       rows.push({ business_id: business.id, customer_id: customerId, type: "payment", amount: remainingAmt, note, applies_to_sale_id: null, logged_by_name: by });
     }
-    const { error } = await supabase.from("transactions").insert(rows);
-    if (error) { alert(error.message); throw error; }
-    await loadData();
+
+    if (!navigator.onLine) {
+      saveOfflineAction("INSERT_TXN", rows);
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from("transactions").insert(rows);
+      if (error) throw error;
+      await loadData();
+    } catch (e) {
+      saveOfflineAction("INSERT_TXN", rows);
+    }
   }
 
   async function updateTxn(id, updates) {
     const by = (member && member.display_name) || "";
-    const { error } = await supabase.from("transactions").update({ amount: updates.amount, note: updates.note, edited_by_name: by }).eq("id", id);
-    if (error) { alert(error.message); throw error; }
-    await loadData();
+    const updatePayload = { amount: updates.amount, note: updates.note, edited_by_name: by };
+
+    if (!navigator.onLine) {
+      saveOfflineAction("UPDATE_TXN", { id, updates: updatePayload });
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from("transactions").update(updatePayload).eq("id", id);
+      if (error) throw error;
+      await loadData();
+    } catch (e) {
+      saveOfflineAction("UPDATE_TXN", { id, updates: updatePayload });
+    }
   }
 
   async function deleteTxn(id) {
     const by = (member && member.display_name) || "";
-    const { error } = await supabase.from("transactions").update({ deleted: true, deleted_at: new Date().toISOString(), deleted_by_name: by }).eq("id", id);
-    if (error) { alert(error.message); throw error; }
-    await loadData();
+    const updatePayload = { deleted: true, deleted_at: new Date().toISOString(), deleted_by_name: by };
+
+    if (!navigator.onLine) {
+      saveOfflineAction("UPDATE_TXN", { id, updates: updatePayload });
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from("transactions").update(updatePayload).eq("id", id);
+      if (error) throw error;
+      await loadData();
+    } catch (e) {
+      saveOfflineAction("UPDATE_TXN", { id, updates: updatePayload });
+    }
   }
 
   async function restoreTxn(id) {
-    const { error } = await supabase.from("transactions").update({ deleted: false, deleted_at: null, deleted_by_name: null }).eq("id", id);
-    if (error) { alert(error.message); throw error; }
-    await loadData();
+    if (!navigator.onLine) {
+      alert("You must be online to restore transactions.");
+      return;
+    }
+    const updatePayload = { deleted: false, deleted_at: null, deleted_by_name: null };
+    try {
+      const { error } = await supabase.from("transactions").update(updatePayload).eq("id", id);
+      if (error) throw error;
+      await loadData();
+    } catch (e) {
+      alert("Network problem. Could not restore transaction right now.");
+    }
   }
 
   async function saveBusinessName(name) {
-    const { error } = await supabase.from("businesses").update({ name: name.trim() }).eq("id", business.id);
-    if (error) { alert(error.message); throw error; }
-    setBusiness((b) => ({ ...b, name: name.trim() }));
+    if (!navigator.onLine) {
+      alert("Network problem. Please connect to the internet to change your business name.");
+      return;
+    }
+    try {
+      const { error } = await supabase.from("businesses").update({ name: name.trim() }).eq("id", business.id);
+      if (error) throw error;
+      setBusiness((b) => ({ ...b, name: name.trim() }));
+    } catch (e) {
+      alert("Network problem. Business name update failed.");
+    }
   }
 
   async function savePin(pin) {
-    const { error } = await supabase.from("businesses").update({ delete_pin: pin || null }).eq("id", business.id);
-    if (error) { alert(error.message); throw error; }
-    setBusiness((b) => ({ ...b, delete_pin: pin || null }));
+    if (!navigator.onLine) {
+      alert("Network problem. Please connect to the internet to change your PIN.");
+      return;
+    }
+    try {
+      const { error } = await supabase.from("businesses").update({ delete_pin: pin || null }).eq("id", business.id);
+      if (error) throw error;
+      setBusiness((b) => ({ ...b, delete_pin: pin || null }));
+    } catch (e) {
+      alert("Network problem. PIN update failed.");
+    }
   }
 
   async function saveCurrency(currencyCode) {
-    const { error } = await supabase.from("businesses").update({ currency_code: currencyCode }).eq("id", business.id);
-    if (error) { alert(error.message); throw error; }
-    setBusiness((b) => ({ ...b, currency_code: currencyCode }));
-  }
-
-  async function inviteTeammate(email) {
-    const { error } = await supabase.from("business_invites").insert({ business_id: business.id, email: email.toLowerCase() });
-    return !error;
+    if (!navigator.onLine) {
+      alert("Network problem. Please connect to the internet to change currency.");
+      return;
+    }
+    try {
+      const { error } = await supabase.from("businesses").update({ currency_code: currencyCode }).eq("id", business.id);
+      if (error) throw error;
+      setBusiness((b) => ({ ...b, currency_code: currencyCode }));
+    } catch (e) {
+      alert("Network problem. Currency update failed.");
+    }
   }
 
   async function changeDisplayName(name) {
-    const { error } = await supabase.from("business_members").update({ display_name: name }).eq("id", member.id);
-    if (error) { alert(error.message); throw error; }
-    setMember((m) => ({ ...m, display_name: name }));
+    if (!navigator.onLine) {
+      alert("Network problem. Please connect to the internet to change your display name.");
+      return;
+    }
+    try {
+      const { error } = await supabase.from("business_members").update({ display_name: name }).eq("id", member.id);
+      if (error) throw error;
+      setMember((m) => ({ ...m, display_name: name }));
+    } catch (e) {
+      alert("Network problem. Display name update failed.");
+    }
+  }
+
+  async function inviteTeammate(email) {
+    if (!navigator.onLine) {
+      alert("Network problem. You must be online to invite teammates.");
+      return false;
+    }
+    try {
+      const { error } = await supabase.from("business_invites").insert({ business_id: business.id, email: email.toLowerCase() });
+      if (error) throw error;
+      return true;
+    } catch (e) {
+      alert("Network problem. Teammate invitation failed.");
+      return false;
+    }
   }
 
   function csvEscape(val) {
@@ -261,7 +480,11 @@ export default function App() {
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      alert("Network problem signing out. Please check your connection.");
+    }
   }
 
   if (!authLoaded || !splashMinTimeUp || (session && !bizLoaded)) {
@@ -280,6 +503,11 @@ export default function App() {
   return (
     <>
       <FontFaces />
+      {!isOnline && (
+        <div style={{ background: "#C4462B", color: "#fff", textAlign: "center", fontSize: "12px", padding: "4px", fontWeight: "600", zIndex: 10000, position: "relative" }}>
+          Network problem: You are offline. Changes are saved locally and will sync automatically when online.
+        </div>
+      )}
       <Ledger
         business={business}
         member={member}
@@ -305,4 +533,4 @@ export default function App() {
     </>
   );
         }
-                                                                
+                  
