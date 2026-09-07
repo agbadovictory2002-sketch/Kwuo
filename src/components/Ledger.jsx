@@ -25,7 +25,7 @@ export default function Ledger({
   business, member, customers, txns, deletedTxns,
   onAddCustomer, onLogSale, onRecordPayment, onUpdateTxn, onDeleteTxn, onRestoreTxn,
   onSaveBusinessName, onSavePin, onSaveCurrency, onInviteTeammate, onChangeDisplayName, onExportBackup, onSignOut,
-  amountsVisible, setAmountsVisible,
+  amountsVisible, setAmountsVisible, pendingSyncCount,
 }) {
   const [view, setView] = useState("dashboard");
   const [activeCustomerId, setActiveCustomerId] = useState(null);
@@ -86,7 +86,7 @@ export default function Ledger({
         <FontFaces />
 
         {view !== "customerDetail" && (
-          <TopBar businessName={business.name} amountsVisible={amountsVisible} onToggleAmounts={() => setAmountsVisible((v) => !v)} onSettings={() => setModal("settings")} />
+          <TopBar businessName={business.name} amountsVisible={amountsVisible} onToggleAmounts={() => setAmountsVisible((v) => !v)} onSettings={() => setModal("settings")} pendingSyncCount={pendingSyncCount} />
         )}
 
         {view === "dashboard" && (
@@ -215,7 +215,7 @@ export default function Ledger({
 }
 
 // ---------- Top bar ----------
-function TopBar({ businessName, onSettings, amountsVisible, onToggleAmounts }) {
+function TopBar({ businessName, onSettings, amountsVisible, onToggleAmounts, pendingSyncCount }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px 0" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
@@ -223,6 +223,11 @@ function TopBar({ businessName, onSettings, amountsVisible, onToggleAmounts }) {
         {businessName && <span style={{ fontSize: 12, color: "#8A8270" }}>· {businessName}</span>}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        {pendingSyncCount > 0 && (
+          <div style={{ background: "#F1EEE5", color: ACCENT, fontSize: 11, fontWeight: 700, padding: "4px 9px", borderRadius: 999, marginRight: 2 }}>
+            {pendingSyncCount} pending sync
+          </div>
+        )}
         <button onClick={onToggleAmounts} style={{ background: "none", border: "none", padding: 6, color: "#8A8270" }} aria-label={amountsVisible ? "Hide amounts" : "Show amounts"}>
           {amountsVisible ? <Eye size={18} /> : <EyeOff size={18} />}
         </button>
@@ -233,7 +238,6 @@ function TopBar({ businessName, onSettings, amountsVisible, onToggleAmounts }) {
     </div>
   );
 }
-
 // ---------- Dashboard ----------
 function Dashboard({ totalOwed, debtors, today, onOpenCustomer, customerCount }) {
   const amt = useAmt();
