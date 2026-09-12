@@ -16,7 +16,10 @@ function saveQueue(q) {
   try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch {}
 }
 function isNetworkError(e) {
-  return !navigator.onLine || (e && (e.message === "Failed to fetch" || e.name === "TypeError" || e.message === "timeout"));
+  if (!navigator.onLine) return true;
+  const msg = ((e && (e.message || e.error_description)) || "") + "";
+  return /failed to fetch|network|load failed|timeout|err_internet|err_network|fetch/i.test(msg) || (e && e.name === "TypeError");
+}
 }
 function withTimeout(promise, ms) {
   return Promise.race([
@@ -242,15 +245,12 @@ export default function App() {
 
   async function insertTxnRows(rows) {
     const withIds = rows.map((r) => ({ ...r, id: r.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())), date: r.date || new Date().toISOString() }));
-    if (navigator.onLine) {
-      try {
-        const { error } = await supabase.from("transactions").insert(withIds);
-        if (!error) { await loadData(); return; }
-        alert(error.message);
-        throw error;
-      } catch (e) {
-        if (!isNetworkError(e)) throw e;
-      }
+    try {
+      const { error } = await supabase.from("transactions").insert(withIds);
+      if (!error) { await loadData(); return; }
+      if (!isNetworkError(error)) { alert(error.message); throw error; }
+    } catch (e) {
+      if (!isNetworkError(e)) throw e;
     }
     setTxns((t) => [...t, ...withIds.map((r) => ({ ...rowToTxn(r), pending: true }))]);
     enqueue({ type: "insertTxns", rows: withIds });
@@ -260,19 +260,16 @@ export default function App() {
   async function addCustomer(name, phone) {
     const trimmedName = name.trim();
     const trimmedPhone = (phone || "").trim();
-    if (navigator.onLine) {
-      try {
-        const { data, error } = await supabase
-          .from("customers")
-          .insert({ business_id: business.id, name: trimmedName, phone: trimmedPhone })
-          .select()
-          .single();
-        if (!error) { await loadData(); return rowToCustomer(data); }
-        alert(error.message);
-        throw error;
-      } catch (e) {
-        if (!isNetworkError(e)) throw e;
-      }
+    try {
+      const { data, error } = await supabase
+        .from("customers")
+        .insert({ business_id: business.id, name: trimmedName, phone: trimmedPhone })
+        .select()
+        .single();
+      if (!error) { await loadData(); return rowToCustomer(data); }
+      if (!isNetworkError(error)) { alert(error.message); throw error; }
+    } catch (e) {
+      if (!isNetworkError(e)) throw e;
     }
     const tempId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
     const optimistic = { id: tempId, name: trimmedName, phone: trimmedPhone, createdAt: Date.now(), pending: true };
@@ -280,7 +277,6 @@ export default function App() {
     enqueue({ type: "addCustomer", tempId, name: trimmedName, phone: trimmedPhone });
     return optimistic;
   }
-
   async function logSale(customerId, amount, note, paidNow) {
     const by = (member && member.display_name) || "";
     const rows = [{ business_id: business.id, customer_id: customerId, type: "sale", amount, note, logged_by_name: by }];
