@@ -20,12 +20,27 @@ function isNetworkError(e) {
   const msg = ((e && (e.message || e.error_description)) || "") + "";
   return /failed to fetch|network|load failed|timeout|err_internet|err_network|fetch/i.test(msg) || (e && e.name === "TypeError");
 }
-}
 function withTimeout(promise, ms) {
   return Promise.race([
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
   ]);
+}
+function overlayPendingCustomers(list, q) {
+  const existingIds = new Set(list.map((c) => c.id));
+  const extra = q
+    .filter((i) => i.type === "addCustomer" && !existingIds.has(i.tempId))
+    .map((i) => ({ id: i.tempId, name: i.name, phone: i.phone, createdAt: Date.now(), pending: true }));
+  return [...list, ...extra];
+}
+function overlayPendingTxns(list, q) {
+  const existingIds = new Set(list.map((t) => t.id));
+  const extra = q
+    .filter((i) => i.type === "insertTxns")
+    .flatMap((i) => i.rows)
+    .filter((r) => !existingIds.has(r.id))
+    .map((r) => ({ ...rowToTxn(r), pending: true }));
+  return [...list, ...extra];
 }
 
 export default function App() {
@@ -140,11 +155,15 @@ export default function App() {
     if (!business) return;
     lastLoadRef.current = Date.now();
 
+    // Show cached customers/transactions immediately, refresh after —
+    // and layer in anything still waiting to sync so it never looks
+    // like it vanished just because the app was closed and reopened.
     try {
       const cachedCustomers = localStorage.getItem(`kwuo-customers-${business.id}`);
       const cachedTxns = localStorage.getItem(`kwuo-txns-${business.id}`);
-      if (cachedCustomers) setCustomers(JSON.parse(cachedCustomers));
-      if (cachedTxns) setTxns(JSON.parse(cachedTxns));
+      const q = loadQueue();
+      if (cachedCustomers) setCustomers(overlayPendingCustomers(JSON.parse(cachedCustomers), q));
+      if (cachedTxns) setTxns(overlayPendingTxns(JSON.parse(cachedTxns), q));
     } catch {}
 
     try {
@@ -156,13 +175,14 @@ export default function App() {
         8000
       );
       if (custErr || txnErr) throw (custErr || txnErr);
-      const loadedCustomers = (custRows || []).map(rowToCustomer);
-      const loadedTxns = (txnRows || []).map(rowToTxn);
+      const q = loadQueue();
+      const loadedCustomers = overlayPendingCustomers((custRows || []).map(rowToCustomer), q);
+      const loadedTxns = overlayPendingTxns((txnRows || []).map(rowToTxn), q);
       setCustomers(loadedCustomers);
       setTxns(loadedTxns);
       try {
-        localStorage.setItem(`kwuo-customers-${business.id}`, JSON.stringify(loadedCustomers));
-        localStorage.setItem(`kwuo-txns-${business.id}`, JSON.stringify(loadedTxns));
+        localStorage.setItem(`kwuo-customers-${business.id}`, JSON.stringify((custRows || []).map(rowToCustomer)));
+        localStorage.setItem(`kwuo-txns-${business.id}`, JSON.stringify((txnRows || []).map(rowToTxn)));
       } catch {}
     } catch (e) {
       // network slow/unreachable — cached data (already shown above) stands as-is
@@ -277,6 +297,7 @@ export default function App() {
     enqueue({ type: "addCustomer", tempId, name: trimmedName, phone: trimmedPhone });
     return optimistic;
   }
+
   async function logSale(customerId, amount, note, paidNow) {
     const by = (member && member.display_name) || "";
     const rows = [{ business_id: business.id, customer_id: customerId, type: "sale", amount, note, logged_by_name: by }];
@@ -452,4 +473,4 @@ export default function App() {
       />
     </>
   );
-            }
+        }
